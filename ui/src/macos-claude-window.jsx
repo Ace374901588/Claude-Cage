@@ -12,6 +12,7 @@ import { copyGuestText } from "./shared-clipboard.mjs";
 import { useWindowVisibility } from "./window-visibility";
 import { createMacWindowConnection } from "./macos-window-connection.mjs";
 import { createMacFrameConnection } from "./macos-frame-connection.mjs";
+import { createMacWindowRecovery } from "./macos-window-recovery.mjs";
 import "./macos-claude-window.css";
 
 const messages = {
@@ -154,7 +155,9 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
                 frameConnection.current = null;
                 nextStatus = 0;
                 frame.current = null;
-                setImage(null);
+                // A transient target change must not blank a valid image. Input
+                // stays disabled until a new frame has decoded and been acked.
+                if (reason !== "window_changed") setImage(null);
                 setError(messages[reason] || "未能读取虚拟 Mac 的窗口画面，请重新连接。");
               }, base);
             }
@@ -214,12 +217,23 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   useEffect(() => {
     if (!screenVisible || !state?.input || !surface.current || !pane.current || (state.persistent && !inputChannel)) return;
     const inputRequest = (action, fields) => windowRequest(base, action, fields, inputChannel);
+    const recovery = createMacWindowRecovery({
+      request: action => inputRequest(action),
+      active: () => Boolean(current.current.screenVisible && current.current.input),
+      onRecovered: () => {
+        setError("");
+        current.current.onStatus(`已激活 ${appName}，请在更新后的画面中继续操作。`);
+        refresh(n => n + 1);
+      },
+      onError: error => setError(error.message),
+    });
     const transport = createMacWindowInput({
       element: surface.current,
       frame: () => frame.current,
       active: () => Boolean(current.current.screenVisible && current.current.input && frame.current),
       request: inputRequest,
-      onError: setError,
+      onError: message => { if (!recovery.pending) setError(message); },
+      onWindowChanged: () => recovery.recover(),
     });
     const preparePaste = () => {
       const lease = { target: transport.target(), epoch: generation.current, transport };
@@ -250,6 +264,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
     });
     controls.current = { transport, input };
     return () => {
+      recovery.dispose();
       input.dispose(); transport.dispose();
       if (controls.current?.transport === transport) controls.current = null;
     };
@@ -290,7 +305,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   return <section className="claude-desktop-view mac-claude" aria-label={"虚拟 Mac 中的 " + appName}>
     <BrowserUploads requests={uploads} onStatus={onStatus} />
     <DesktopToolbar title={appName} desktop={state} platform="macOS" zoom={zoom} setZoom={setZoom} onConfirm={onConfirm}
-      onStop={browser ? undefined : () => action("stop")} refresh={() => refresh(n => n+1)} sidebarCollapsed={sidebarCollapsed} onExpand={onExpand}>
+      onStop={browser ? undefined : () => action("stop")} refresh={() => void action("launch")} refreshLabel={"激活并重新连接 " + appName} sidebarCollapsed={sidebarCollapsed} onExpand={onExpand}>
       {browser && <BrowserFavorites ready={Boolean(state?.installed)} onOpen={onOpenPage} />}
       <MacOSLogin />
       {!browser && <button disabled={!state?.input || !image || transferring} onClick={() => void chooseFiles()}>添加附件</button>}
@@ -299,12 +314,12 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
       {state?.installed && !state.screen && <button onClick={() => action("request-screen")}>授权窗口画面</button>}
       {state?.installed && !state.input && <button onClick={() => action("request-input")}>授权键鼠</button>}
     </DesktopToolbar>
-    {error && <p role="alert">{error}</p>}
     {fileError && <p role="alert">{fileError}</p>}
     {state && !state.installed && <p>此虚拟 Mac 尚未安装 {appName}。</p>}
     {state?.running && !state.screen && <p>{messages.screen_recording_permission}</p>}
     {state?.running && state.screen && !state.input && <p>{messages.accessibility_permission}</p>}
     <div ref={pane} className="mac-claude-frame" style={{ "--desktop-zoom": zoom }}>
+      {error && <p role="alert" className="mac-claude-error">{error}</p>}
       {image && <img ref={surface} key={image.geometry || `${image.pid}-${image.window}`} alt={appName + " 客机窗口"} src={image.src} draggable={false}
         onLoad={e => {
           const img = e.currentTarget;

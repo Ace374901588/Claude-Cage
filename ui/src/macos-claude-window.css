@@ -2,4 +2,5 @@
 .mac-claude p { margin: 10px 16px; }
 .mac-claude-frame { flex: 1; min-height: 0; min-width: 0; overflow: hidden; background: var(--paper); display: flex; align-items: center; justify-content: center; position: relative; container-type: size; }
 .mac-claude-frame img { display: block; max-width: 100%; max-height: 100%; width: min(100%, calc(var(--frame-width, 600px) * var(--desktop-zoom, 1)), calc(100cqh * var(--frame-aspect, 1))); height: auto; object-fit: contain; user-select: none; }
+.mac-claude-frame .mac-claude-error { position: absolute; z-index: 1; top: 8px; left: 8px; right: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--strong); }
 .mac-claude-typing { position: absolute; width: 1px; height: 1px; bottom: 0; left: 0; opacity: 0; }

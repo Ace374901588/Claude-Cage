@@ -6,9 +6,26 @@ const modifiers = keys => ({
   command: keys.has("MetaLeft") || keys.has("MetaRight"),
 });
 
-export function createMacWindowInput({ element, frame, active, request, onError, eventWindow = window }) {
+export function createMacWindowInput({ element, frame, active, request, onError, onWindowChanged, eventWindow = window }) {
   let keyboard, disposed = false, queued, pending = 0, move, drag, lastClick;
   const keys = new Set(), listeners = [];
+  const recoverable = new WeakSet();
+  const requestInput = async (action, fields) => {
+    try { return await request(action, fields); }
+    catch (error) {
+      if (error?.code === "window_changed" && action === "pointer" && fields.phase === "move" && !fields.buttons) {
+        keys.clear();
+        await request("input-reset").catch(() => {});
+        return { available: false };
+      }
+      // Only a deliberate input gesture may reactivate the guest. Hover and
+      // caret polling must never take focus from another application.
+      if (error?.code === "window_changed" && (action === "text" || action === "scroll" ||
+          action === "key" && fields.down || action === "pointer" && fields.phase === "down" ||
+          action === "ime" && ["begin", "update", "commit"].includes(fields.mode))) recoverable.add(error);
+      throw error;
+    }
+  };
   const run = action => {
     if (disposed) return Promise.reject(new Error("窗口输入连接已关闭"));
     if (pending >= 128) return Promise.reject(new Error("窗口输入等待过多，请重新连接"));
@@ -19,6 +36,11 @@ export function createMacWindowInput({ element, frame, active, request, onError,
       catch (error) {
         keys.clear();
         await request("input-reset").catch(() => {});
+        if (!disposed && recoverable.has(error)) {
+          // Do not replay a click or queued keys against a newly focused window.
+          // The viewer obtains a fresh frame before the user acts again.
+          void Promise.resolve().then(() => !disposed && onWindowChanged?.()).catch(() => {});
+        }
         throw error;
       }
     });
@@ -33,7 +55,7 @@ export function createMacWindowInput({ element, frame, active, request, onError,
   const valid = target => !disposed && active() && identity(target) === identity(frame());
   const send = (action, fields, target = frame()) => run(() => {
     if (!target || !valid(target)) throw new Error("输入窗口已变化，请重新操作");
-    return request(action, { ...target, ...fields });
+    return requestInput(action, { ...target, ...fields });
   });
   const report = promise => { void promise.catch(error => { if (!disposed) onError(error.message); }); };
   const on = (target, name, callback, options) => {
@@ -53,7 +75,7 @@ export function createMacWindowInput({ element, frame, active, request, onError,
     if (down) keys.add(code); else keys.delete(code);
     const character = symbol >= 0x01000000 ? symbol & 0x00ffffff : symbol;
     const name = character >= 32 && character < 0xff00 ? String.fromCodePoint(character) : code;
-    return request("key", { ...target, code, key: name, down, ...modifiers(keys) });
+    return requestInput("key", { ...target, code, key: name, down, ...modifiers(keys) });
   };
   on(element, "pointerdown", event => {
     if (!active() || !frame() || ![0, 1, 2].includes(event.button)) return;
@@ -81,7 +103,7 @@ export function createMacWindowInput({ element, frame, active, request, onError,
     report(run(() => {
       if (move === entry) move = undefined;
       if (!valid(target)) throw new Error("输入窗口已变化，请重新操作");
-      return request("pointer", { ...target, ...entry.fields });
+      return requestInput("pointer", { ...target, ...entry.fields });
     }));
   });
   on(element, "pointerup", event => {
