@@ -12,6 +12,7 @@ import { copyGuestText } from "./shared-clipboard.mjs";
 import { useWindowVisibility } from "./window-visibility";
 import { createMacWindowConnection } from "./macos-window-connection.mjs";
 import { createMacFrameConnection } from "./macos-frame-connection.mjs";
+import { macDesktopZoomKey, observeMacWindowViewport } from "./macos-window-layout.mjs";
 import { reportDiagnostic, reportDisplayDiagnostic } from "./diagnostics.mjs";
 import "./macos-claude-window.css";
 
@@ -73,7 +74,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   const [inputChannel, setInputChannel] = useState(null);
   const frameConnection = useRef(null);
   const request = (action, fields) => windowRequest(base, action, fields, connection.current);
-  const [zoom, setZoom] = useDesktopZoom();
+  const [zoom, setZoom] = useDesktopZoom(true, macDesktopZoomKey);
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
   const [fileError, setFileError] = useState("");
@@ -93,18 +94,11 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   useLayoutEffect(() => {
     const element = pane.current;
     if (!visible || !element) return;
-    const measure = () => {
-      const { width, height } = element.getBoundingClientRect();
-      viewport.current = width > 0 && height > 0 ? {
-        width: Math.min(2560, Math.max(320, Math.round(width / zoom))),
-        height: Math.min(1600, Math.max(240, Math.round(height / zoom))),
-      } : null;
-      frameConnection.current?.resize(viewport.current);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => { observer.disconnect(); viewport.current = null; };
+    const stop = observeMacWindowViewport(element, zoom, value => {
+      viewport.current = value;
+      if (value) frameConnection.current?.resize(value);
+    });
+    return () => { stop(); viewport.current = null; };
   }, [visible, zoom]);
   const picker = useRef(null);
   const pickerTarget = useRef(null);
@@ -348,7 +342,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   if (!visible) return null;
   return <section className="claude-desktop-view mac-claude" aria-label={"虚拟 Mac 中的 " + appName}>
     <BrowserUploads requests={uploads} onStatus={onStatus} />
-    <DesktopToolbar title={appName} desktop={state} platform="macOS" zoom={zoom} setZoom={setZoom} onConfirm={onConfirm}
+    <DesktopToolbar title={appName} desktop={state} platform="macOS" automatic zoomPreferenceKey={macDesktopZoomKey} zoom={zoom} setZoom={setZoom} onConfirm={onConfirm}
       onStop={browser ? undefined : () => action("stop")} refresh={() => {
         if (!browser && state?.running) void action("launch");
         else refresh(n => n + 1);
@@ -390,7 +384,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
     {state && !state.installed && <p>此虚拟 Mac 尚未安装 {appName}。</p>}
     {state?.running && !state.screen && <p>{messages.screen_recording_permission}</p>}
     {state?.running && state.screen && !state.input && <p>{messages.accessibility_permission}</p>}
-    <div ref={pane} className="mac-claude-frame" style={{ "--desktop-zoom": zoom }}>
+    <div ref={pane} className="mac-claude-frame" style={{ "--desktop-zoom": zoom === "auto" ? 1 : zoom }}>
       {image?.video ? <canvas ref={surface} key={image.geometry || `${image.pid}-${image.window}`} role="img" aria-label={appName + " 客机窗口"} /> : image && <img ref={surface} key={image.geometry || `${image.pid}-${image.window}`} alt={appName + " 客机窗口"} src={image.src} draggable={false}
         onLoad={e => {
           const img = e.currentTarget;

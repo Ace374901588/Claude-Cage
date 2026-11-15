@@ -1,7 +1,7 @@
 Cage H264 local integration
 
 Base: c31d80cca5d8f79ae84e8b2e8ec3d7aa16020f3b (0.1.8-rc).
-Local version: 0.1.8-local.h264.5. Apple Silicon, macOS 14+; Python 3.11+ to package.
+Local version: 0.1.8-local.h264.6. Apple Silicon, macOS 14+; Python 3.11+ to package.
 
 Build with the repository Go/Node/Swift build prerequisites available:
   python3 scripts/build-h264-local.py --base-app /Applications/Cage.app --output /absolute/path/Cage-H264.app
@@ -62,6 +62,15 @@ app, another window or a stale foreground target causes input to be rejected.
 Disconnect cleanup releases held input only to its recorded process. This
 version changes the guest helper, so it cannot reuse an older helper binary.
 
+macOS Desktop and Chrome default to adaptive display sizing, with a separate
+Mac zoom preference. Continuous pane resizing is coalesced before changing the
+guest window and encoder. The entire native titlebar is retained, including
+Claude navigation. Ordinary movable/resizable windows are moved into their
+display's visible work area before enlargement, with bounded verification and
+retry backoff. Fixed-size dialogs, sheets, fullscreen windows and active drags
+retain native geometry. Capture and input continue to use the same measured
+window and fresh geometry token; stale clicks are never replayed.
+
 Local version tags use a manual update channel. This prevents an ordinary
 upstream release from silently discarding the local integration. To upgrade,
 review/rebase the source, run relevant checks, rebuild to a new path, stop Cage,
@@ -80,6 +89,8 @@ Validation:
   bash scripts/guest-os/build-macos-claude-window.sh /new/absolute/helper.app
   xcrun swiftc -parse-as-library scripts/guest-os/macos-window-pointer.swift scripts/guest-os/tests/macos-window-pointer-test.swift -o /tmp/cage-window-pointer-test
   /tmp/cage-window-pointer-test
+  xcrun swiftc -parse-as-library scripts/guest-os/macos-window-layout.swift scripts/guest-os/tests/macos-window-layout-test.swift -o /tmp/cage-window-layout-test
+  /tmp/cage-window-layout-test
   /new/absolute/helper.app/Contents/MacOS/CageGuestWindow --setup-password-self-test
   codesign --verify --deep --strict /absolute/path/Cage-H264.app
 

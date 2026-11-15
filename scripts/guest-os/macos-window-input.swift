@@ -81,6 +81,7 @@ func macPressTarget(_ target: MacInputWindow, point: CGPoint) -> AXUIElement? {
 @MainActor
 final class MacWindowInputSession {
     private static var pointerOwner: UUID?
+    static var hasHeldPointer: Bool { pointerOwner != nil }
     private static var keyOwners: [UInt16: UUID] = [:]
     private let id = UUID()
     private let source = CGEventSource(stateID: .privateState)

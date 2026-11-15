@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 
 SOURCE = Path(__file__).resolve().parent.parent
-VERSION = "0.1.8-local.h264.5"
+VERSION = "0.1.8-local.h264.6"
 BASE = "c31d80cca5d8f79ae84e8b2e8ec3d7aa16020f3b"
 
 
@@ -78,7 +78,7 @@ def main():
         info = plistlib.loads(info_path.read_bytes())
         info.update(CFBundleIdentifier="io.github.lee-xeo.claude-cage.h264-local",
                     CFBundleName="Cage H264", CFBundleDisplayName="Cage H264",
-                    CFBundleVersion="8", CFBundleShortVersionString="0.1.8", CageVersion=VERSION)
+                    CFBundleVersion="9", CFBundleShortVersionString="0.1.8", CageVersion=VERSION)
         info_path.write_bytes(plistlib.dumps(info))
         material = bundle / "Contents/Resources/local-h264"
         material.mkdir()
