@@ -88,6 +88,7 @@ final class MacWindowInputSession {
     private var keys: [UInt16: (pid_t, CGWindowID)] = [:]
     private var pressedCodes: [String: UInt16] = [:]
     private var buttons: [Int: (pid_t, CGWindowID, CGPoint, Int)] = [:]
+    private var scrollDistance = MacWindowScrollAccumulator()
     private var focusedElement: AXUIElement?
     private var focusedTarget = ""
     private var focusContext = ""
@@ -153,6 +154,32 @@ final class MacWindowInputSession {
         event.post(tap: .cghidEventTap)
     }
 
+    func scroll(_ input: Request, target: MacInputWindow, window: SCWindow, canvas: ClaudeCanvas?,
+                horizontal: Double = 0, limit: Double = 1200) throws {
+        try Self.requirePointerOwner(self)
+        let deltaX = input.deltaX ?? horizontal
+        guard let x = input.x, let y = input.y, x.isFinite, y.isFinite,
+              (0..<1).contains(x), (0..<1).contains(y),
+              let delta = input.delta, delta.isFinite, deltaX.isFinite,
+              (-limit...limit).contains(delta), (-limit...limit).contains(deltaX) else { throw Failure(8, "invalid_input") }
+        let crop = canvas?.cropTop ?? 0
+        let point = CGPoint(x: target.origin.x + target.extent.width * x,
+                            y: target.origin.y + crop + (target.extent.height - crop) * y)
+        let ownsPoint = input.surface == "browser"
+            ? try MacChromeWindow.shared.ownsPoint(point, pid: target.pid, window: window.windowID)
+            : try macOwnsPointerPoint(target, point: point, window: window.windowID)
+        guard ownsPoint else { throw Failure(7, "window_changed") }
+        guard let distance = scrollDistance.take(deltaX: deltaX, deltaY: delta,
+            target: "\(target.pid):\(window.windowID):\(input.geometry ?? "")", point: point,
+            time: ProcessInfo.processInfo.systemUptime) else { throw Failure(8, "invalid_input") }
+        if distance.x == 0 && distance.y == 0 { return }
+        guard let event = macWindowScrollEvent(source: source, deltaX: distance.x, deltaY: distance.y,
+            point: point, flags: flags(input), window: window.windowID) else { throw Failure(8, "input_failed") }
+        // postToPid does not route a scroll to Chromium's view under the
+        // cursor. Use the same checked screen-space path as pointer events.
+        event.post(tap: .cghidEventTap)
+    }
+
     private func stillOwnsWindow(_ pid: pid_t, _ window: CGWindowID) -> Bool {
         guard (try? consoleUser()) != nil else { return false }
         let values = CGWindowListCopyWindowInfo(.optionIncludingWindow, window) as? [[String: Any]]
@@ -176,6 +203,7 @@ final class MacWindowInputSession {
             }
         }
         keys.removeAll(); pressedCodes.removeAll(); buttons.removeAll(); composition = nil
+        scrollDistance = MacWindowScrollAccumulator()
         if Self.pointerOwner == id { Self.pointerOwner = nil }
     }
 

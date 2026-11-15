@@ -1,7 +1,7 @@
 Cage H264 local integration
 
 Base: c31d80cca5d8f79ae84e8b2e8ec3d7aa16020f3b (0.1.8-rc).
-Local version: 0.1.8-local.h264.6. Apple Silicon, macOS 14+; Python 3.11+ to package.
+Local version: 0.1.8-local.h264.7. Apple Silicon, macOS 14+; Python 3.11+ to package.
 
 The integrated main branch also includes current upstream changes. Build that
 complete source, including its current launcher and guest kit, with:
@@ -14,7 +14,7 @@ merging source does not update an installed application.
 The command below is the legacy packager for the pinned vendor-kit baseline.
 It refuses newer launcher/guest-resource sources that the old bundle cannot
 provide. Use the full source build above after updating upstream; reproduce the
-pinned .6 package from its original source branch when needed.
+legacy package from its pinned source snapshot when needed.
 With the repository Go/Node/Swift build prerequisites available:
   python3 scripts/build-h264-local.py --base-app /Applications/Cage.app --output /absolute/path/Cage-H264.app
 
@@ -89,6 +89,14 @@ review/rebase the source, run relevant checks, rebuild to a new path, stop Cage,
 verify signatures/hashes and replace the local app atomically. Reuse an
 unchanged guest helper when possible. Developer ID signing/notarization and
 upstream publication are separate release steps, not implied by a local build.
+
+Trackpad scrolling uses the same live foreground/window/AX hit-test checks and
+Quartz input route as pointer events, including Claude Desktop. A connection
+accumulates subpixel distance before posting integral continuous pixel events;
+its remainder is cleared on target/point changes, a gesture pause, or reset.
+The viewer normalizes wheel units and coalesces adjacent queued scrolls, with a
+bounded backlog and the original per-request limits. Keys, clicks, modifiers,
+cursor targets and geometry changes remain ordering/ownership boundaries.
 
 The local app remains ad hoc signed and unnotarized. Normal guest Screen
 Recording/Accessibility authorization may be required after changing helper

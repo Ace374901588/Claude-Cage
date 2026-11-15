@@ -8,7 +8,7 @@ const modifiers = keys => ({
 });
 
 export function createMacWindowInput({ element, frame, active, request, onError, onWindowChanged, eventWindow = window }) {
-  let keyboard, disposed = false, queued, pending = 0, move, drag, lastClick;
+  let keyboard, disposed = false, queued, pending = 0, move, wheel, drag, lastClick, resetSequence = 0;
   const keys = new Set(), listeners = [];
   const recoverable = new WeakSet();
   const requestInput = async (action, fields) => {
@@ -30,6 +30,9 @@ export function createMacWindowInput({ element, frame, active, request, onError,
   const run = action => {
     if (disposed) return Promise.reject(new Error("窗口输入连接已关闭"));
     if (pending >= 128) return Promise.reject(new Error("窗口输入等待过多，请重新连接"));
+    // A new key, click or other operation is an ordering barrier for wheel
+    // coalescing. Never merge a later gesture across that operation.
+    wheel = undefined;
     pending++;
     const result = (queued || Promise.resolve()).then(async () => {
       if (disposed) throw new Error("窗口输入连接已关闭");
@@ -123,6 +126,8 @@ export function createMacWindowInput({ element, frame, active, request, onError,
   });
   const reset = () => {
     if (disposed) return;
+    resetSequence++;
+    wheel = undefined;
     move = undefined; keys.clear();
     const hadInput = Boolean(drag || keyboard);
     const pointer = drag?.pointer;
@@ -134,10 +139,37 @@ export function createMacWindowInput({ element, frame, active, request, onError,
   on(element, "lostpointercapture", () => { if (drag) reset(); });
   on(element, "contextmenu", event => event.preventDefault());
   on(element, "wheel", event => {
-    if (!active()) return;
+    if (!active() || !frame()) return;
     event.preventDefault();
-    report(send("scroll", { ...point(event), delta: Math.max(-1200, Math.min(1200, event.deltaY)),
-      deltaX: Math.max(-1200, Math.min(1200, event.deltaX)) }));
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.getBoundingClientRect().height : 1;
+    const dx = (event.deltaX ?? 0) * unit, dy = (event.deltaY ?? 0) * unit;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || !dx && !dy) return;
+    const bounded = value => Math.max(-1200, Math.min(1200, value));
+    const fields = { ...point(event), shift: event.shiftKey, control: event.ctrlKey,
+      alt: event.altKey, command: event.metaKey };
+    const target = { ...frame() };
+    if (wheel && identity(wheel.target) === identity(target) &&
+        Object.keys(fields).every(key => fields[key] === wheel.fields[key])) {
+      // Bound queued distance as well as request count. A slow or disconnected
+      // guest must not replay seconds of obsolete scrolling after recovery.
+      wheel.dx = Math.max(-4800, Math.min(4800, wheel.dx + bounded(dx)));
+      wheel.dy = Math.max(-4800, Math.min(4800, wheel.dy + bounded(dy)));
+      return;
+    }
+    const entry = { target, fields, dx: bounded(dx), dy: bounded(dy), resetSequence };
+    const result = run(async () => {
+      if (wheel === entry) wheel = undefined;
+      let x = entry.dx, y = entry.dy;
+      while (x || y) {
+        if (entry.resetSequence !== resetSequence) return;
+        if (!valid(target)) throw staleWindow();
+        const deltaX = bounded(x), delta = bounded(y);
+        await requestInput("scroll", { ...target, ...fields, deltaX, delta });
+        x -= deltaX; y -= delta;
+      }
+    });
+    wheel = entry;
+    report(result);
   }, { passive: false });
   on(eventWindow, "blur", reset);
 

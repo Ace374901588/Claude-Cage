@@ -141,7 +141,10 @@ func sendInput(_ input: Request, window: SCWindow, canvas: ClaudeCanvas? = nil, 
     case "pointer":
         guard let inputSession else { throw Failure(8, "input_connection_required") }
         try inputSession.pointer(input, target: target, window: window, canvas: canvas)
-    case "click", "scroll", "project-click":
+    case "scroll":
+        try (inputSession ?? MacWindowInputSession()).scroll(input, target: target, window: window,
+            canvas: canvas, horizontal: scrollX, limit: maxScroll)
+    case "click", "project-click":
         guard let x = input.x, let y = input.y, (0..<1).contains(x), (0..<1).contains(y) else { throw Failure(8, "invalid_input") }
         let crop = canvas?.cropTop ?? 0
         let point = CGPoint(x: origin.x + extent.width * x, y: origin.y + crop + (extent.height-crop) * y)
@@ -196,23 +199,15 @@ func sendInput(_ input: Request, window: SCWindow, canvas: ClaudeCanvas? = nil, 
             guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success else { throw Failure(8, "input_failed") }
             return
         }
-        let events: [CGEvent?]
-        if input.action == "scroll" {
-            let horizontal = input.deltaX ?? scrollX
-            guard let delta = input.delta, delta.isFinite, horizontal.isFinite,
-                  (-maxScroll...maxScroll).contains(delta), (-maxScroll...maxScroll).contains(horizontal) else { throw Failure(8, "invalid_input") }
-            events = [CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: horizontal == 0 ? 1 : 2, wheel1: Int32(-delta), wheel2: Int32(-horizontal), wheel3: 0)]
-        } else {
-            // Address the NSEvent to this window using its unflipped local
-            // coordinates. CGEvent's global position alone does not give an
-            // Electron NSView a locationInWindow when posting to a process.
-            let local = CGPoint(x: point.x-origin.x, y: extent.height-(point.y-origin.y))
-            let types: [NSEvent.EventType] = [.leftMouseDown, .leftMouseUp]
-            events = types.map { type in
-                NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],
-                                   timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(window.windowID),
-                                   context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)?.cgEvent
-            }
+        // Address the NSEvent to this window using its unflipped local
+        // coordinates. CGEvent's global position alone does not give an
+        // Electron NSView a locationInWindow when posting to a process.
+        let local = CGPoint(x: point.x-origin.x, y: extent.height-(point.y-origin.y))
+        let types: [NSEvent.EventType] = [.leftMouseDown, .leftMouseUp]
+        let events = types.map { type in
+            NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(window.windowID),
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)?.cgEvent
         }
         for item in events {
             guard let event = item else { throw Failure(8, "input_failed") }

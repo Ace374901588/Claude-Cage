@@ -77,6 +77,111 @@ test("native window forwards right button, double click and horizontal scroll", 
   } finally { f.input.dispose(); }
 });
 
+test("a trackpad burst coalesces pending distance without overflowing the input queue", async () => {
+  const f = fixture();
+  let release;
+  const gate = f.input.run(() => new Promise(resolve => { release = resolve; }));
+  await Promise.resolve();
+  try {
+    for (let i = 0; i < 240; i++) f.pointer("wheel", { deltaX: 0.125, deltaY: 0.25 });
+    release(); await gate; await f.input.run(() => {});
+    const scroll = f.calls.filter(call => call.action === "scroll");
+    assert.equal(scroll.length, 1);
+    assert.equal(scroll[0].deltaX, 30);
+    assert.equal(scroll[0].delta, 60);
+    assert.deepEqual(f.errors, []);
+  } finally { f.input.dispose(); }
+});
+
+test("in-flight scroll keeps only a coalesced successor and bounds obsolete queued distance", async () => {
+  let acknowledge;
+  const f = fixture({ request: async action => {
+    if (action === "scroll" && !acknowledge) await new Promise(resolve => { acknowledge = resolve; });
+    return { ok: true };
+  } });
+  try {
+    f.pointer("wheel", { deltaY: 12, deltaX: 0 });
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(typeof acknowledge, "function");
+    for (let i = 0; i < 240; i++) f.pointer("wheel", { deltaY: 120, deltaX: 0 });
+    acknowledge(); await f.input.run(() => {});
+    const scroll = f.calls.filter(call => call.action === "scroll");
+    assert.equal(scroll.length, 5);
+    assert.deepEqual(scroll.map(call => call.delta), [12, 1200, 1200, 1200, 1200]);
+    assert.deepEqual(f.errors, []);
+  } finally { f.input.dispose(); }
+});
+
+test("wheel units are normalized and fractional distances survive forwarding", async () => {
+  const f = fixture();
+  try {
+    for (const [deltaY, deltaMode, expected] of [[0.25, 0, 0.25], [3, 1, 48], [1, 2, 300]]) {
+      f.pointer("wheel", { deltaX: 0, deltaY, deltaMode });
+      await f.input.run(() => {});
+      assert.equal(f.calls.at(-1).delta, expected);
+    }
+    const count = f.calls.length;
+    for (const deltaY of [NaN, Infinity, 0]) f.pointer("wheel", { deltaX: 0, deltaY });
+    await f.input.run(() => {});
+    assert.equal(f.calls.length, count);
+  } finally { f.input.dispose(); }
+});
+
+test("wheel coalescing does not cross keys, cursor targets or changed modifiers", async () => {
+  const f = fixture();
+  let release;
+  const gate = f.input.run(() => new Promise(resolve => { release = resolve; }));
+  await Promise.resolve();
+  try {
+    for (let i = 0; i < 4; i++) f.pointer("wheel", { deltaX: 0, deltaY: 0.25 });
+    f.input.sendKey(97, "KeyA", true);
+    f.pointer("wheel", { deltaX: 0, deltaY: 2 });
+    f.pointer("wheel", { clientX: 220, deltaX: 0, deltaY: 3 });
+    f.pointer("wheel", { clientX: 220, shiftKey: true, deltaX: 0, deltaY: 4 });
+    release(); await gate; await f.input.run(() => {});
+    assert.deepEqual(f.calls.map(call => call.action), ["scroll", "key", "scroll", "scroll", "scroll"]);
+    assert.deepEqual(f.calls.filter(call => call.action === "scroll").map(call => call.delta), [1, 2, 3, 4]);
+    assert.equal(f.calls[2].x, 0.25);
+    assert.equal(f.calls[3].x, 0.5);
+    assert.equal(f.calls[4].shift, true);
+  } finally { f.input.dispose(); }
+});
+
+test("a resized window discards queued wheel motion without replaying it", async () => {
+  const f = fixture();
+  let release;
+  const gate = f.input.run(() => new Promise(resolve => { release = resolve; }));
+  await Promise.resolve();
+  try {
+    f.pointer("wheel", { deltaX: 0, deltaY: 20 });
+    f.changeTarget();
+    const drained = f.input.run(() => {});
+    release(); await gate;
+    await assert.rejects(drained, { code: "window_changed" });
+    assert.equal(f.calls.some(call => call.action === "scroll"), false);
+    f.pointer("wheel", { deltaX: 0, deltaY: 10 });
+    await f.input.run(() => {});
+    assert.equal(f.calls.at(-1).geometry, "geometry-2");
+    assert.equal(f.calls.at(-1).delta, 10);
+  } finally { f.input.dispose(); }
+});
+
+test("losing host focus cancels unsent trackpad distance", async () => {
+  const f = fixture();
+  let release;
+  const gate = f.input.run(() => new Promise(resolve => { release = resolve; }));
+  await Promise.resolve();
+  try {
+    f.pointer("wheel", { deltaX: 0, deltaY: 20 });
+    f.eventWindow.dispatchEvent(new Event("blur"));
+    release(); await gate; await f.input.run(() => {});
+    assert.equal(f.calls.some(call => call.action === "scroll"), false);
+    f.pointer("wheel", { deltaX: 0, deltaY: 10 });
+    await f.input.run(() => {});
+    assert.equal(f.calls.at(-1).delta, 10);
+  } finally { f.input.dispose(); }
+});
+
 test("cancelled pointer capture resets held input before new keys", async () => {
   const f = fixture();
   try {

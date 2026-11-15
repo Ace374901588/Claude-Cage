@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -59,6 +60,38 @@ struct WindowPointerTests {
         }
         precondition(macWindowPointerEvent(source: source, phase: "down", button: 0,
             point: CGPoint(x: CGFloat.nan, y: 0), clicks: 1, flags: [], window: window) == nil)
-        print("Pointer regression checks passed: captured-window ownership, occlusion and app-switch rejection, screen coordinates, down/up/drag, click counts and modifiers. No events were posted.")
+
+        var scrolling = MacWindowScrollAccumulator()
+        for step in 0..<4 {
+            let distance = scrolling.take(deltaX: -0.25, deltaY: 0.25, target: "first",
+                point: point, time: Double(step) * 0.01)!
+            precondition(distance.x == (step == 3 ? -1 : 0) && distance.y == (step == 3 ? 1 : 0),
+                         "subpixel trackpad motion must accumulate instead of disappearing")
+        }
+        for change in ["window", "point", "pause"] {
+            scrolling = MacWindowScrollAccumulator()
+            _ = scrolling.take(deltaX: 0, deltaY: 0.75, target: "first", point: point, time: 1)
+            let distance = scrolling.take(deltaX: 0, deltaY: 0.5,
+                target: change == "window" ? "second" : "first",
+                point: change == "point" ? CGPoint(x: point.x + 10, y: point.y) : point,
+                time: change == "pause" ? 1.3 : 1.01)!
+            precondition(distance.y == 0, "a remainder must not cross a changed \(change)")
+        }
+        for delta in [Double.nan, Double.infinity, 32001] {
+            precondition(scrolling.take(deltaX: 0, deltaY: delta, target: "first", point: point, time: 2) == nil)
+        }
+        let scroll = macWindowScrollEvent(source: source, deltaX: -12, deltaY: 45,
+            point: point, flags: [.maskShift], window: window)!
+        let native = NSEvent(cgEvent: scroll)!
+        precondition(scroll.type == .scrollWheel && scroll.location == point)
+        precondition(scroll.getIntegerValueField(.scrollWheelEventIsContinuous) == 1)
+        precondition(native.hasPreciseScrollingDeltas && native.scrollingDeltaX == 12 && native.scrollingDeltaY == -45,
+                     "AppKit must receive correctly signed pixel distances on both axes")
+        precondition(scroll.flags.contains(.maskShift))
+        for (x, y, id) in [(0, 0, window), (0, 1, 0), (32001, 0, window)] as [(Int32, Int32, CGWindowID)] {
+            precondition(macWindowScrollEvent(source: source, deltaX: x, deltaY: y,
+                point: point, flags: [], window: id) == nil)
+        }
+        print("Pointer and scroll regression checks passed: window ownership, occlusion, screen coordinates, mouse phases, subpixel accumulation, target/point/pause reset, bounded continuous pixel scrolling and modifiers. No events were posted.")
     }
 }
