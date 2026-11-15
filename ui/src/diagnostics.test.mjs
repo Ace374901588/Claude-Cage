@@ -31,3 +31,19 @@ test("reports retry after local controller failure, bound payloads, and omit arb
   for (let n = 0; n < 30; n++) await Promise.resolve();
   assert.equal(attempts.length, 21, "client rate limit must bound accepted events to 20 per minute");
 });
+
+test("display diagnostics contain only fixed event names, codecs and numeric measurements", async t => {
+  const saved = globalThis.fetch, attempts = [];
+  t.after(() => { globalThis.fetch = saved; });
+  globalThis.fetch = async (_, options) => { attempts.push(JSON.parse(options.body)); return { ok: true }; };
+  const { reportDisplayDiagnostic } = await import("./diagnostics.mjs?display-test");
+  reportDisplayDiagnostic("browser", "mode", { format: "video/h264", frames: 3, width: 1920, height: 1350,
+    url: "private-page", text: "private-content", fallback: "private-string", bytes: NaN });
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].level, "info");
+  assert.ok(attempts[0].message.includes("video/h264"));
+  assert.ok(!attempts[0].message.includes("private"));
+  reportDisplayDiagnostic("private-surface", "mode", {});
+  assert.equal(attempts.length, 1);
+});

@@ -27,7 +27,7 @@ async function flush() {
     }
   }
 }
-export function reportDiagnostic(source, error) {
+export function reportDiagnostic(source, error, level = "error") {
   const now = Date.now();
   if (now - windowStarted > 60_000) { windowStarted = now; sent = 0; }
   if (sent >= 20 || pending.length >= 20) return;
@@ -37,8 +37,18 @@ export function reportDiagnostic(source, error) {
   else if (typeof error === "string") message = error;
   else message = "异步操作发生异常，未收集原始对象";
   // The backend redacts before persisting. Never report the report's own failure.
-  pending.push({ source, level: "error", message: message.slice(0, 4096) });
+  pending.push({ source, level: level === "info" ? "info" : "error", message: message.slice(0, 4096) });
   void flush();
+}
+export function reportDisplayDiagnostic(surface, event, stats) {
+  if (!["browser", "claude"].includes(surface) || !["mode", "fallback", "closed"].includes(event)) return;
+  const value = { surface, event };
+  for (const field of ["frames", "bytes", "width", "height", "elapsedMs", "decodeDrawMs", "encodeMs"]) {
+    if (Number.isFinite(stats[field]) && stats[field] >= 0) value[field] = stats[field];
+  }
+  if (["video/h264", "image/jpeg", "image/png"].includes(stats.format)) value.format = stats.format;
+  if (["webcodecs_unavailable", "video_decoder_unavailable", "guest_image_fallback", "sharp_png", "presentation_failed"].includes(stats.fallback)) value.fallback = stats.fallback;
+  reportDiagnostic("frontend", "macos-display " + JSON.stringify(value), "info");
 }
 export function installDiagnostics(target = window) {
   target.addEventListener("error", event => {

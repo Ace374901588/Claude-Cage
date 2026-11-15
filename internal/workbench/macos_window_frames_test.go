@@ -66,11 +66,16 @@ func TestMacOSBinaryFramePreservesBytesAndRejectsInvalidRecords(t *testing.T) {
 }
 
 func TestMacOSFrameStreamAcknowledgementResizeAndDisconnect(t *testing.T) {
-	t.Run("Claude", func(t *testing.T) { testMacOSFrameStream(t, false) })
-	t.Run("Chrome", func(t *testing.T) { testMacOSFrameStream(t, true) })
+	t.Run("Claude", func(t *testing.T) { testMacOSFrameStream(t, false, 2, false) })
+	t.Run("Chrome", func(t *testing.T) { testMacOSFrameStream(t, true, 2, false) })
+	t.Run("Claude balanced", func(t *testing.T) { testMacOSFrameStream(t, false, 1.5, false) })
+	t.Run("Chrome balanced", func(t *testing.T) { testMacOSFrameStream(t, true, 1.5, false) })
+	t.Run("Claude video", func(t *testing.T) { testMacOSFrameStream(t, false, 1.5, true) })
+	t.Run("Chrome video", func(t *testing.T) { testMacOSFrameStream(t, true, 1.5, true) })
+	t.Run("Sharp ignores video", func(t *testing.T) { testMacOSFrameStream(t, true, 2, true) })
 }
 
-func testMacOSFrameStream(t *testing.T, browser bool) {
+func testMacOSFrameStream(t *testing.T, browser bool, density float64, video bool) {
 	s := testServer(t)
 	transport, guest := net.Pipe()
 	defer guest.Close()
@@ -104,7 +109,7 @@ func testMacOSFrameStream(t *testing.T, browser bool) {
 			return
 		}
 		defer ws.Close()
-		relayMacOSFrames(r.Context(), ws, transport, transport, browser)
+		relayMacOSFrames(r.Context(), ws, transport, transport, browser, makeMacOSFramePolicy(density))
 	}))
 	defer server.Close()
 	s.origin = server.URL
@@ -119,12 +124,29 @@ func testMacOSFrameStream(t *testing.T, browser bool) {
 			t.Fatal(err)
 		}
 	}
+	videoSession := ""
 	next := func() macOSWindowRequest {
 		t.Helper()
 		select {
 		case request := <-requests:
 			if !request.Wait || !request.Binary || !request.KeepAlive || !request.Refresh {
 				t.Fatalf("frame stream lost its wire contract: %+v", request)
+			}
+			policy := makeMacOSFramePolicy(density)
+			encoding := policy.Encoding
+			if video && density < 2 {
+				encoding = "h264"
+				if videoSession == "" {
+					videoSession = request.VideoSession
+				}
+				if videoSession == "" || request.VideoSession != videoSession {
+					t.Fatal("video lost its connection-owned encoder identity")
+				}
+			} else if request.VideoSession != "" {
+				t.Fatal("image requests created an encoder identity")
+			}
+			if request.Scale != density || request.Encoding != encoding {
+				t.Fatalf("display policy missing from frame request: %+v", request)
 			}
 			return request
 		case <-time.After(2 * time.Second):
@@ -145,7 +167,7 @@ func testMacOSFrameStream(t *testing.T, browser bool) {
 		}
 		return header
 	}
-	send(macOSFrameSubscription{Width: 800, Height: 600, Scale: 2, Revision: 1})
+	send(macOSFrameSubscription{Width: 800, Height: 600, Scale: 2, Revision: 1, Video: video})
 	wantAction, wantSurface := "frame", ""
 	if browser {
 		wantAction, wantSurface = "browser-frame", "browser"
@@ -171,7 +193,7 @@ func testMacOSFrameStream(t *testing.T, browser bool) {
 	next()
 	// Resize while the guest is waiting for the next changed frame. The old
 	// response must be consumed without forwarding it to the new viewport.
-	send(macOSFrameSubscription{Width: 900, Height: 640, Scale: 2, Revision: 2})
+	send(macOSFrameSubscription{Width: 900, Height: 640, Scale: 2, Revision: 2, Video: video})
 	time.Sleep(50 * time.Millisecond)
 	header.Sequence = "old-size"
 	responses <- macFrameRecord(t, header, pixels)

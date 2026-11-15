@@ -22,6 +22,8 @@ struct Request: Decodable {
     var project, nonce, geometry: String?
     var width, height: Int?
     var scale: Double?
+    var encoding: String?
+    var videoSession: String?
     var after: String?
     var keepAlive: Bool?
     var refresh: Bool?
@@ -313,7 +315,8 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession) async
         let running = ((try? claudePIDs())?.isEmpty == false)
         var screen = CGPreflightScreenCaptureAccess()
         if #available(macOS 15.2, *) { screen = screen || ClaudePicker.shared.selection != nil }
-        return ["version": (Bundle(url: appURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "", "installed": installed, "running": running, "screen": screen, "input": AXIsProcessTrusted(), "input_protocol": 1, "persistent": true, "push_frames": true]
+        return ["version": (Bundle(url: appURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "", "installed": installed, "running": running, "screen": screen, "input": AXIsProcessTrusted(), "input_protocol": 1, "persistent": true, "push_frames": true,
+            "frame_encodings": MacWindowVideoEncoder.hardwareAdvertised ? ["png", "jpeg", "h264"] : ["png", "jpeg"]]
     case "finish-login":
         guard browser, let token = input.login else { throw Failure(8, "invalid_login") }
         MacChromeWindow.shared.finish(token)
@@ -353,7 +356,14 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession) async
                 target = fresh
                 source = selection ?? SCContentFilter(desktopIndependentWindow: fresh)
             }
-            let reply = try await canvas.capture(target, filter:source, layout:layout, after:input.after, wait:input.wait == true, binary:input.binary == true)
+            let reply: [String: Any]
+            if input.encoding == "h264", input.binary == true,
+               let videoSession = input.videoSession, !videoSession.isEmpty, videoSession.utf8.count <= 128 {
+                reply = try await canvas.captureVideo(target, filter: source, layout: layout,
+                    after: input.after, wait: input.wait == true, videoSession: videoSession)
+            } else {
+                reply = try await canvas.capture(target, filter:source, layout:layout, after:input.after, wait:input.wait == true, binary:input.binary == true, encoding:input.encoding ?? "png")
+            }
             try consoleUser()
             return reply
         }
@@ -409,6 +419,10 @@ private func respond(_ fd: Int32) async {
 
 private func respondConnection(_ fd: Int32, inputSession: MacWindowInputSession) async {
     let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    var videoSession: String?
+    defer {
+        if let owned = videoSession { Task { await MacWindowVideoEncoder.shared.close(owned) } }
+    }
     var timeout = timeval(tv_sec: 6, tv_usec: 0)
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
@@ -427,6 +441,13 @@ private func respondConnection(_ fd: Int32, inputSession: MacWindowInputSession)
         }
         let line = body.prefix(while: { $0 != 10 })
         let request = try JSONDecoder().decode(Request.self, from: line)
+        if request.encoding == "h264" {
+            guard request.action == "frame" || request.action == "browser-frame",
+                  request.binary == true, let requested = request.videoSession,
+                  !requested.isEmpty, requested.utf8.count <= 128,
+                  videoSession == nil || videoSession == requested else { return }
+            videoSession = requested
+        }
         body.removeFirst(line.count + 1)
         if request.action == "audio-capture" {
             guard body.isEmpty else { return }

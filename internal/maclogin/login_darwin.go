@@ -32,9 +32,14 @@ type loginSession struct {
 	maintenanceMachineID     string
 	maintenanceAdministrator string
 	passwordSelection        passwordSelection
+	manualConsole            bool
+	consoleMachineID         string
 }
 
 func (s *loginSession) currentScreen() string {
+	if s.manualConsole {
+		return s.manualConsoleScreen()
+	}
 	if s.maintenance != "" {
 		surface, err := s.maintenanceProbe(false)
 		if err != nil {
@@ -99,9 +104,14 @@ func (s *loginSession) close() {
 	s.maintenanceMachineID = ""
 	s.maintenanceAdministrator = ""
 	s.passwordSelection = passwordSelection{}
+	s.manualConsole = false
+	s.consoleMachineID = ""
 }
 
 func (s *loginSession) handle(in request) reply {
+	if in.Console || (s.manualConsole && in.Action != "open") {
+		return s.handleManualConsole(in)
+	}
 	if in.Maintenance != "" || (s.maintenance != "" && in.Action != "open") {
 		return s.handleMaintenance(in)
 	}

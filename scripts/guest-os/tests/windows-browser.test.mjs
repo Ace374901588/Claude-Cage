@@ -1075,3 +1075,69 @@ integration("a late native resize during startup retains the last valid image", 
   assert.equal(stats.fallbacks, 0);
   assert.equal(stats.screenshots, 0);
 });
+
+integration("macOS rejects stale screencast pixels before sending a frame to the viewer", async t => {
+  const f = await fixture(t, {}, { platform: "darwin" }), { page } = await f.open();
+  const old = (await page.screenshot({ type: "jpeg", quality: 85 })).toString("base64");
+  await f.call("resize", { width: 1600, height: 1000 });
+  interceptCapture(f.context(), frame => ({ ...frame, data: old }));
+  const frame = await f.call("frame", {}, "GET");
+  const size = await page.evaluate(async jpeg => {
+    const image = new Image(); image.src = "data:image/jpeg;base64," + jpeg; await image.decode();
+    return [image.naturalWidth, image.naturalHeight];
+  }, frame.jpeg);
+  assert.deepEqual(size, [frame.width, frame.height]);
+  assert.deepEqual(size, [1600, 1000]);
+});
+
+integration("macOS HiDPI frames capture the current viewport after deep scrolling", async t => {
+  const f = await fixture(t, {}, { platform: "darwin" }), { page } = await f.open();
+  await page.evaluate(() => {
+    document.body.innerHTML = '<style>body{margin:0}section{height:500px}</style>' +
+      Array.from({ length: 16 }, (_, i) => `<section style="background:${i % 2 ? '#00f' : '#f00'}">Marker ${i}</section>`).join('');
+  });
+  await f.call("frame", {}, "GET");
+  await page.evaluate(() => scrollTo(0, 3500));
+  await page.waitForTimeout(100);
+  const frame = await f.call("frame", {}, "GET");
+  const observed = await page.evaluate(async jpeg => {
+    const image = new Image(); image.src = "data:image/jpeg;base64," + jpeg; await image.decode();
+    const canvas = document.createElement("canvas"); canvas.width = image.width; canvas.height = image.height;
+    const ctx = canvas.getContext("2d"); ctx.drawImage(image, 0, 0);
+    return { size: [image.width, image.height], pixel: [...ctx.getImageData(100, 100, 1, 1).data], scroll: scrollY };
+  }, frame.jpeg);
+  assert.deepEqual(observed.size, [frame.width, frame.height]);
+  assert.equal(observed.scroll, 3500);
+  assert(observed.pixel[2] > 220 && observed.pixel[0] < 30, JSON.stringify(observed));
+});
+
+integration("macOS static frames do not create a screenshot feedback loop", async t => {
+  const f = await fixture(t, {}, { platform: "darwin" }), { page } = await f.open();
+  await page.evaluate(() => { document.body.innerHTML = '<div style="height:500px;background:#246"></div>'; });
+  let screenshots = 0;
+  const screenshot = page.screenshot.bind(page);
+  page.screenshot = async (...args) => { screenshots++; return screenshot(...args); };
+  let frame = await f.call("frame", {}, "GET"), stable = 0;
+  for (let i = 0; i < 10; i++) {
+    await page.waitForTimeout(50);
+    const next = await f.call("frame", { after: frame.sequence }, "GET");
+    if (next.unchanged) stable++;
+    else frame = next;
+  }
+  assert(stable >= 8, `static frames changed ${10 - stable} times`);
+  assert(screenshots <= 3, `static frame caused ${screenshots} screenshots`);
+});
+
+integration("macOS frame dimensions follow every supported device density after resize", async t => {
+  for (const displayScale of [1, 1.5, 2]) {
+    const f = await fixture(t, {}, { platform: "darwin", displayScale }), { page } = await f.open();
+    await f.call("resize", { width: 1600, height: 1000 });
+    const frame = await f.call("frame", {}, "GET");
+    const observed = await page.evaluate(async jpeg => {
+      const image = new Image(); image.src = "data:image/jpeg;base64," + jpeg; await image.decode();
+      return { size: [image.width, image.height], density: devicePixelRatio };
+    }, frame.jpeg);
+    assert.deepEqual(observed.size, [frame.width, frame.height]);
+    assert.equal(observed.density, displayScale);
+  }
+});

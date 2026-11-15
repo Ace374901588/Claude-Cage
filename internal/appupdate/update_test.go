@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"github.com/sylvinus/agent-vm/internal/host"
+	"github.com/sylvinus/agent-vm/internal/version"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,6 +16,22 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestLocalFeatureBuildKeepsManualUpdatesWithoutReadingProfile(t *testing.T) {
+	previous := version.Version
+	version.Version = "0.1.8-local.h264.1"
+	t.Cleanup(func() { version.Version = previous })
+	for _, operation := range []string{"check", "download"} {
+		var output bytes.Buffer
+		if code := Run(filepath.Join(t.TempDir(), "absent", "config.json"), []string{operation}, &output); code != 0 {
+			t.Fatalf("local update read configuration or attempted network: %d %s", code, output.String())
+		}
+		var result State
+		if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.Phase != "manual" || result.ArchivePath != "" {
+			t.Fatalf("local build may be replaced: %+v %v", result, err)
+		}
+	}
+}
 
 func fixtureRelease(v string, pre bool) release {
 	return release{Tag: "v" + v, Prerelease: pre, Assets: []asset{{Name: "Cage-" + v + "-macos-arm64.dmg", URL: "https://github.com/" + repository + "/releases/download/v" + v + "/Cage-" + v + "-macos-arm64.dmg", Size: 3, Digest: "sha256:" + strings.Repeat("a", 64), State: "uploaded"}}}

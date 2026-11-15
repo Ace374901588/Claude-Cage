@@ -15,8 +15,19 @@ import (
 // before Apple's unmodified IOConsoleUsers array. Accept exactly one active,
 // completed, explicitly locked session for that same user.
 func permittedLoginScreen(data []byte, user string) string {
+	return permittedUserConsole(data, user, true)
+}
+
+func permittedMaintenanceConsole(data []byte, user string) string {
+	return permittedUserConsole(data, user, false)
+}
+
+func permittedUserConsole(data []byte, user string, locked bool) string {
 	if bytes.Equal(data, []byte("system-login")) {
-		return "system-login"
+		if locked {
+			return "system-login"
+		}
+		return ""
 	}
 	header, payload, ok := bytes.Cut(data, []byte("\n"))
 	fields := strings.Fields(string(header))
@@ -49,6 +60,10 @@ func permittedLoginScreen(data []byte, user string) string {
 		return ""
 	}
 	key := ""
+	prefix := "locked-"
+	if !locked {
+		prefix = "console-"
+	}
 	for _, record := range doc.Values[0].Records {
 		if record.XMLName.Local != "dict" || len(record.Items)%2 != 0 {
 			return ""
@@ -66,15 +81,22 @@ func permittedLoginScreen(data []byte, user string) string {
 			continue
 		}
 		boolTrue := func(k string) bool { v := values[k]; return v.XMLName.Local == "true" && v.Value == "" }
+		lock := values["CGSSessionScreenIsLocked"]
+		lockMatches := lock.XMLName.Local == "true" && lock.Value == ""
+		if !locked {
+			// IOConsoleUsers omits this key for an unlocked session on current
+			// macOS. An explicitly false boolean is also valid; other types fail.
+			lockMatches = (lock.XMLName.Local == "" || lock.XMLName.Local == "false") && lock.Value == ""
+		}
 		id, name := values["kCGSSessionUserIDKey"], values["kCGSSessionUserNameKey"]
 		session := values["CGSSessionUniqueSessionUUID"]
 		sessionID, err := uuid.Parse(session.Value)
 		if key != "" || !boolTrue("kCGSSessionOnConsoleKey") || !boolTrue("kCGSessionLoginDoneKey") ||
-			!boolTrue("CGSSessionScreenIsLocked") || id.XMLName.Local != "integer" || id.Value != fields[0] ||
+			!lockMatches || id.XMLName.Local != "integer" || id.Value != fields[0] ||
 			name.XMLName.Local != "string" || name.Value != user || session.XMLName.Local != "string" || err != nil || sessionID == uuid.Nil {
 			return ""
 		}
-		key = "locked-" + sessionID.String()
+		key = prefix + sessionID.String()
 	}
 	return key
 }

@@ -100,7 +100,8 @@ final class MacChromeWindow {
         var result: [String: Any] = ["surface": "browser", "installed": fm.fileExists(atPath: app.path),
          "running": !applications(activeDirectory).isEmpty, "version": Bundle(url: app)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
          "login": currentLogin != nil, "screen": CGPreflightScreenCaptureAccess(),
-         "input": AXIsProcessTrusted(), "input_protocol": 1, "persistent": true, "push_frames": true]
+         "input": AXIsProcessTrusted(), "input_protocol": 1, "persistent": true, "push_frames": true,
+         "frame_encodings": MacWindowVideoEncoder.hardwareAdvertised ? ["png", "jpeg", "h264"] : ["png", "jpeg"]]
         if let regular {
             result["profile_pid"] = regular.processIdentifier
             var info = proc_bsdinfo()

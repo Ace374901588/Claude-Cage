@@ -120,6 +120,7 @@ func (s *Server) macOSWindowConnection(w http.ResponseWriter, r *http.Request) {
 		if !validMacOSWindowRequest(message.Request) {
 			return
 		}
+		message.Request = s.macOSFramePolicy().apply(message.Request)
 		message.Request = macOSWindowClientRequest(message.Request, true, macOSBrowserWindowRoute(r))
 		body, err := json.Marshal(message.Request)
 		if err != nil || len(body) > 64<<10 {

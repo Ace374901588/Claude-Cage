@@ -19,6 +19,7 @@ func requireGuest() throws { throw Failure(1,"unused") }
 enum MacSetupPassword {
     static func runStream() -> Never { fatalError("unused") }
     static func passwordFocused(_ app: NSRunningApplication, window: CGRect) -> Bool { false }
+    static func desktopSurface(pid: pid_t, bounds: CGRect, layer: Int, display: CGRect) -> Bool { false }
 }
 @main struct Check {
     @MainActor static func main() {

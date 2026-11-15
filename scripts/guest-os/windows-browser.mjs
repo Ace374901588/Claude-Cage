@@ -126,10 +126,10 @@ export function browserExecutable() {
 export function createNativeBrowserService(options = {}) {
   const mac = options.platform === "darwin";
   const continuousFrames = !mac && options.continuousFrames !== false;
-  // The dedicated Windows controller streams the live viewport even when a
+  // The native controller captures the live viewport even when a
   // site hasn't finished downloading fonts. Playwright otherwise waits on
   // document.fonts.ready for every screenshot, blocking the input queue too.
-  if (!mac) process.env.PW_TEST_SCREENSHOT_NO_FONTS_READY = "1";
+  process.env.PW_TEST_SCREENSHOT_NO_FONTS_READY = "1";
   const directory = options.directory ?? path.join(process.env.LOCALAPPDATA || path.join(homedir(), "AppData", "Local"), "Cage", "Browser");
   const selectionFile = path.join(directory, "tabs.json");
   const uploadDirectory = path.join(directory, "Uploads");
@@ -414,9 +414,9 @@ export function createNativeBrowserService(options = {}) {
         // Screenshot capture can itself schedule another compositor frame.
         // An identical damage bitmap must not trigger a screenshot feedback
         // loop or invalidate the viewer's existing static-frame receipt.
-        if (mac || capture.signal !== frame.data) {
+        if (capture.signal !== frame.data) {
           capture.signal = frame.data;
-          capture.latest = { jpeg: mac || streaming ? frame.data : undefined, sequence: token() };
+          capture.latest = { jpeg: streaming ? frame.data : undefined, sequence: token() };
         }
         received();
       };
@@ -438,12 +438,10 @@ export function createNativeBrowserService(options = {}) {
           });
           tab.inputScale = displayScale;
         }
-        // Screencast otherwise downscales HiDPI output to CSS pixels. This clip
-        // preserves the logical viewport and input coordinates at native density.
-        if (mac) await connection.send("Emulation.setDeviceMetricsOverride", {
-          ...size, deviceScaleFactor: displayScale, mobile: false,
-          viewport: { x: 0, y: 0, ...size, scale: displayScale },
-        });
+        // On macOS use the compositor only as a damage signal. Its HiDPI frames
+        // may have old dimensions, and a document-anchored viewport clip goes
+        // blank after scrolling beyond the clip. Playwright captures the actual
+        // current viewport at device density below, without changing input maps.
         await connection.send("Page.startScreencast", {
           format: "jpeg", quality: 85,
           maxWidth: Math.round(size.width * displayScale), maxHeight: Math.round(size.height * displayScale),
@@ -474,12 +472,16 @@ export function createNativeBrowserService(options = {}) {
     }
     try {
       const frame = capture.latest;
-      // Windows screencast preserves a damage stream at CSS resolution, but a
+      // Screencast preserves a damage stream at CSS resolution, but a
       // viewport scale changes its native input surface. Capture only new damage
       // at the context's actual device density and reuse it for static frames.
-      if (!mac && !frame.jpeg) {
+      if (!frame.jpeg) {
         const started = performance.now();
-        frame.jpeg = (await tab.page.screenshot({ type: "jpeg", quality: 85, caret: "initial" })).toString("base64");
+        const jpeg = (await tab.page.screenshot({ type: "jpeg", quality: 85, caret: "initial", scale: "device", timeout: 5000 })).toString("base64");
+        const dimensions = jpegFrameSize(jpeg);
+        if (!dimensions || dimensions.width !== Math.round(size.width * displayScale) || dimensions.height !== Math.round(size.height * displayScale))
+          throw failure("frame_unavailable", "浏览器画面尺寸尚未稳定，请重试");
+        frame.jpeg = jpeg;
         captureMetrics.screenshots++;
         captureMetrics.total_ms += performance.now() - started;
       }

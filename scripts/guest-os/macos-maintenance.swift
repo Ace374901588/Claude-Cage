@@ -123,6 +123,11 @@ enum MacMaintenance {
                   let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary), bounds.width > 0, bounds.height > 0,
                   (window[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { continue }
             let owner = window[kCGWindowOwnerPID as String] as? Int32
+            if let owner, owner != front.processIdentifier,
+               let layer = window[kCGWindowLayer as String] as? Int,
+               MacSetupPassword.desktopSurface(pid: owner, bounds: bounds, layer: layer, display: display) {
+                continue
+            }
             let app = owner.flatMap { NSRunningApplication(processIdentifier: $0) }
             let consent = app.flatMap { $0.bundleIdentifier == "com.apple.UserNotificationCenter" && verified($0) ? $0 : nil }
             let target = owner == front.processIdentifier ? front : consent

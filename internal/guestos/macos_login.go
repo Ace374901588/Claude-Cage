@@ -8,6 +8,7 @@ type MacLoginRequest struct {
 	Session     string `json:"session,omitempty"`
 	Setup       bool   `json:"initial_setup,omitempty"`
 	Maintenance string `json:"maintenance,omitempty"`
+	Console     bool   `json:"manual_console,omitempty"`
 	Geometry    string `json:"geometry,omitempty"`
 	Code        int    `json:"code"`
 	Shift       bool   `json:"shift"`
@@ -28,6 +29,7 @@ type MacLoginReply struct {
 	Recovery           string `json:"recovery,omitempty"`
 	Administrator      string `json:"administrator,omitempty"`
 	MaintenanceVersion int    `json:"maintenance_version,omitempty"`
+	ConsoleVersion     int    `json:"console_version,omitempty"`
 }
 
 func ValidMacMaintenancePurpose(value string) bool {

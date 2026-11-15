@@ -30,7 +30,7 @@ func macOSWorkbenchRoute(path string) bool {
 		return id == "requests" || id == "open" || browserFileID.MatchString(id)
 	}
 	switch path {
-	case "/api/macos/first-setup", "/api/appearance/codex", "/api/macos/project-approval", "/api/macos/exit-policy", "/api/macos/login", "/api/macos/maintenance":
+	case "/api/macos/first-setup", "/api/appearance/codex", "/api/macos/project-approval", "/api/macos/exit-policy", "/api/macos/login", "/api/macos/maintenance", "/api/macos/console":
 		return true
 	}
 	return strings.HasPrefix(path, "/api/macos/claude/") || strings.HasPrefix(path, "/api/macos-browser/")
@@ -193,6 +193,9 @@ func (s *Server) attachMacOSGuest() error {
 	newlyReady := !s.ready && err == nil
 	checkAfterReconnect := newlyReady && !s.closing && !s.networkPaused && !s.jobs.snapshot().Running
 	s.ready = err == nil
+	if err == nil {
+		s.initMacOSFramePolicyLocked()
+	}
 	s.guestUpdateError = ""
 	if err != nil {
 		s.guestUpdateError = err.Error()
@@ -279,6 +282,7 @@ func (s *Server) stopMacOSGuest() error {
 	s.closeWindowsBrowser()
 	s.mu.Lock()
 	s.ready = false
+	s.credentials.DisplayScale = 0
 	s.mu.Unlock()
 	s.terminals.closeAll()
 	s.closeProjectShares()

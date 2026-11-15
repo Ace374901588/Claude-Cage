@@ -63,16 +63,17 @@ private func canSet(_ window: AXUIElement, _ name: String) -> Bool {
     return AXUIElementIsAttributeSettable(window, name as CFString, &result) == .success && result.boolValue
 }
 
-private func titleBarHeight(_ window: AXUIElement, _ frame: CGRect) -> CGFloat {
-    var bottom: CGFloat = 0
-    for name in [kAXCloseButtonAttribute, kAXMinimizeButtonAttribute, kAXZoomButtonAttribute] {
-        guard let raw = axAttribute(window, name), CFGetTypeID(raw) == AXUIElementGetTypeID(),
-              let button = axRect(raw as! AXUIElement), button.width > 2, button.height > 2,
-              frame.contains(button), button.minX-frame.minX < 100, button.maxY-frame.minY < 70 else { continue }
-        let margin = min(8, max(2, button.minY - frame.minY))
-        bottom = max(bottom, ceil(button.maxY - frame.minY + margin))
+@MainActor
+private func visibleWorkArea(_ bounds: CGRect) -> CGRect {
+    let screens = NSScreen.screens.compactMap { screen -> (CGRect, CGRect)? in
+        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+        let display = CGDisplayBounds(CGDirectDisplayID(number.uint32Value))
+        return (display, MacWindowLayout.workArea(display: display, screen: screen.frame, visible: screen.visibleFrame))
     }
-    return bottom < frame.height / 3 ? bottom : 0
+    return screens.max { lhs, rhs in
+        let a = lhs.0.intersection(bounds), b = rhs.0.intersection(bounds)
+        return (a.isNull ? 0 : a.width * a.height) < (b.isNull ? 0 : b.width * b.height)
+    }?.1 ?? CGDisplayBounds(CGMainDisplayID())
 }
 
 @MainActor
@@ -91,51 +92,59 @@ final class ClaudeCanvasSession {
         return try claudePIDs().contains(pid)
     }
 
-    private func cropHeight(_ ax: AXUIElement, _ rect: CGRect) -> CGFloat {
-        browser ? 0 : titleBarHeight(ax, rect)
-    }
-
     private var last: ClaudeCanvas?
     private var token = ""
-    private var requested: (id: CGWindowID, pid: pid_t, size: CGSize, observed: CGSize, time: Date)?
+    private var requested: (id: CGWindowID, pid: pid_t, target: CGRect, observed: CGRect, time: Date)?
 
     func layout(_ window: SCWindow, filter: SCContentFilter, width: Int, height: Int, scale: Double) async throws -> ClaudeCanvas {
         guard let pid = window.owningApplication?.processID,
               (320...2560).contains(width), (240...1600).contains(height),
               scale.isFinite, (1...2).contains(scale) else { throw Failure(8, "invalid_input") }
         var bounds = try liveBounds(window.windowID, pid)
-        var crop: CGFloat = 0, resized = false
+        var resized = false
         if let ax = owningAXWindow(pid, bounds) {
-            crop = cropHeight(ax, bounds)
-            if canSet(ax, kAXSizeAttribute) {
-                let display = CGDisplayBounds(CGMainDisplayID())
-                let wanted = CGSize(width: min(CGFloat(width), display.width),
-                                    height: min(CGFloat(height) + crop, display.height))
-                let close = abs(bounds.width - wanted.width) < 2 && abs(bounds.height - wanted.height) < 2
-                let recent = requested.map { $0.id == window.windowID && $0.pid == pid && $0.size == wanted &&
-                    $0.observed == bounds.size && Date().timeIntervalSince($0.time) < 3 } ?? false
+            let adjustable = MacWindowLayout.mayAdjust(
+                standard: axAttribute(ax, kAXSubroleAttribute) as? String == kAXStandardWindowSubrole,
+                modal: axAttribute(ax, kAXModalAttribute) as? Bool == true,
+                hasSheets: (axAttribute(ax, kAXChildrenAttribute) as? [AXUIElement])?.contains {
+                    axAttribute($0, kAXRoleAttribute) as? String == kAXSheetRole
+                } == true,
+                fullscreen: axAttribute(ax, "AXFullScreen") as? Bool == true,
+                movable: canSet(ax, kAXPositionAttribute), sizable: canSet(ax, kAXSizeAttribute),
+                dragging: MacWindowInputSession.hasHeldPointer)
+            if adjustable, let wanted = MacWindowLayout.target(current: bounds,
+                viewport: CGSize(width: width, height: height), workArea: visibleWorkArea(bounds)) {
+                let close = MacWindowLayout.agrees(bounds, wanted)
+                let recent = requested.map { $0.id == window.windowID && $0.pid == pid && $0.target == wanted &&
+                    $0.observed == bounds && Date().timeIntervalSince($0.time) < 3 } ?? false
                 if !close && !recent {
-                    var size = wanted
-                    if let value = AXValueCreate(.cgSize, &size),
-                       AXUIElementSetAttributeValue(ax, kAXSizeAttribute as CFString, value) == .success {
+                    // Make room at the destination first. Resizing a small
+                    // window against the old right/bottom edge can be clamped.
+                    // A bounded second pass handles asynchronous native layout
+                    // and application minimum sizes without a per-frame loop.
+                    for _ in 0..<2 {
+                        guard try owns(pid), owningAXWindow(pid, bounds) != nil,
+                              !MacWindowInputSession.hasHeldPointer else { throw Failure(7, "window_changed") }
+                        var origin = wanted.origin, size = wanted.size
+                        if bounds.origin != origin, let value = AXValueCreate(.cgPoint, &origin) {
+                            _ = AXUIElementSetAttributeValue(ax, kAXPositionAttribute as CFString, value)
+                        }
+                        if let value = AXValueCreate(.cgSize, &size) {
+                            _ = AXUIElementSetAttributeValue(ax, kAXSizeAttribute as CFString, value)
+                        }
                         try await Task.sleep(nanoseconds: 70_000_000)
                         bounds = try liveBounds(window.windowID, pid)
-                        // Position only an enlarged guest window that would extend off its display.
-                        var origin = CGPoint(x: max(display.minX, min(bounds.minX, display.maxX-bounds.width)),
-                                             y: max(display.minY, min(bounds.minY, display.maxY-bounds.height)))
-                        if origin != bounds.origin, canSet(ax, kAXPositionAttribute),
-                           let point = AXValueCreate(.cgPoint, &origin) {
-                            _ = AXUIElementSetAttributeValue(ax, kAXPositionAttribute as CFString, point)
-                            bounds = try liveBounds(window.windowID, pid)
-                        }
+                        if MacWindowLayout.agrees(bounds, wanted) { break }
                     }
-                    requested = (window.windowID, pid, wanted, bounds.size, Date())
+                    guard try owns(pid), owningAXWindow(pid, bounds) != nil else { throw Failure(7, "window_changed") }
+                    requested = (window.windowID, pid, wanted, bounds, Date())
                 }
-                resized = abs(bounds.width-wanted.width) < 2 && abs(bounds.height-wanted.height) < 2
-                crop = cropHeight(ax, bounds)
+                resized = MacWindowLayout.agrees(bounds, wanted)
             }
         }
-        return ClaudeCanvas(id: window.windowID, pid: pid, frame: bounds, cropTop: crop,
+        // Claude's unified titlebar also contains navigation and the chat
+        // title. Keep it in both capture and the input coordinate system.
+        return ClaudeCanvas(id: window.windowID, pid: pid, frame: bounds, cropTop: 0,
                             scale: min(max(1,CGFloat(filter.pointPixelScale)), CGFloat(scale)), resizable: resized)
     }
 
@@ -147,13 +156,50 @@ final class ClaudeCanvasSession {
     func inputGeometry(_ requested: String, window: SCWindow) throws -> ClaudeCanvas {
         guard let last, token == requested, last.id == window.windowID, last.pid == window.owningApplication?.processID,
               try liveBounds(last.id, last.pid) == last.frame,
-              let ax = owningAXWindow(last.pid, last.frame), cropHeight(ax,last.frame) == last.cropTop else {
+              owningAXWindow(last.pid, last.frame) != nil, last.cropTop == 0 else {
             throw Failure(7, "window_changed")
         }
         return last
     }
 
-    func capture(_ window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas, after: String? = nil, wait: Bool = false, binary: Bool = false, phoneJPEG: Bool = false) async throws -> [String:Any] {
+    func captureVideo(_ window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas,
+                      after: String?, wait: Bool, videoSession: String) async throws -> [String: Any] {
+        let config = SCStreamConfiguration()
+        config.width = max(2, Int((layout.frame.width * layout.scale).rounded()))
+        config.height = max(2, Int((layout.frame.height * layout.scale).rounded()))
+        config.captureResolution = .best
+        config.colorSpaceName = CGColorSpace.sRGB
+        config.ignoreShadowsSingleWindow = true; config.showsCursor = false
+        if #available(macOS 14.2, *) { config.includeChildWindows = browser }
+        let geometry = record(layout)
+        let (pixels, sequence) = try await stream.frameBuffer(filter: filter, configuration: config,
+            identity: geometry, after: after, wait: wait)
+        guard try liveBounds(layout.id, layout.pid) == layout.frame, try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        guard let pixels else { return ["unchanged": true, "sequence": sequence, "geometry": geometry] }
+        let top = Int((layout.cropTop * CGFloat(CVPixelBufferGetHeight(pixels)) / layout.frame.height).rounded())
+        let encoded: MacEncodedVideoFrame
+        do {
+            encoded = try await MacWindowVideoEncoder.shared.encode(pixels, cropTop: top, stream: videoSession,
+                identity: geometry, keyFrame: after?.isEmpty != false)
+        } catch {
+            try Task.checkCancellation()
+            // The caller can continue with JPEG when hardware is temporarily
+            // unavailable. The browser then disables video for this connection.
+            return try await capture(window, filter: filter, layout: layout, after: after, wait: false,
+                binary: true, encoding: "jpeg")
+        }
+        guard token == geometry, last?.matches(layout) == true,
+              try liveBounds(layout.id, layout.pid) == layout.frame, try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        return ["window": layout.id, "pid": layout.pid, "mime": "video/h264", "sequence": sequence,
+            "contentWidth": layout.content.width, "contentHeight": layout.content.height,
+            "pixelWidth": encoded.width, "pixelHeight": encoded.height, "cropTop": layout.cropTop,
+            "resizable": layout.resizable, "geometry": geometry, "imageBytes": encoded.data,
+            "codec": encoded.codec, "description": encoded.description.base64EncodedString(),
+            "timestamp": encoded.timestamp, "keyFrame": encoded.keyFrame,
+            "encodeMilliseconds": encoded.encodeMilliseconds]
+    }
+
+    func capture(_ window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas, after: String? = nil, wait: Bool = false, binary: Bool = false, phoneJPEG: Bool = false, encoding: String = "png") async throws -> [String:Any] {
         let config = SCStreamConfiguration()
         config.width = max(1, Int((layout.frame.width*layout.scale).rounded()))
         config.height = max(1, Int((layout.frame.height*layout.scale).rounded()))
@@ -170,17 +216,17 @@ final class ClaudeCanvasSession {
               let content = image.cropping(to: CGRect(x:0,y:top,width:image.width,height:image.height-top)),
               try liveBounds(layout.id, layout.pid) == layout.frame,
               try owns(layout.pid) else { throw Failure(7, "window_changed") }
-        var data = phoneJPEG ? try phoneDesktopJPEG(content) : try pngData(content)
-        var mime = phoneJPEG ? "image/jpeg" : "image/png"
-        if data.count >= 8<<20 {
-            // Preserve native glyph density and geometry even on photo-heavy windows.
-            mime = "image/jpeg"
-            for quality in [0.93, 0.84] {
-                data = try encodedImage(content, type:.jpeg, properties:[kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
-                if data.count < 8<<20 { break }
-            }
-        }
-        guard data.count < 8<<20 else { throw Failure(8, "frame_limit") }
+        let encoded: MacEncodedWindowImage
+        do { encoded = try await MacWindowImageEncoder.shared.encode(content, encoding: encoding, phone: phoneJPEG) }
+        catch MacWindowEncodingError.frameLimit { throw Failure(8, "frame_limit") }
+        catch MacWindowEncodingError.invalidEncoding { throw Failure(8, "invalid_input") }
+        catch { throw Failure(8, "capture_failed") }
+        // Encoding now yields the GUI actor. Recheck the exact captured window
+        // and geometry after the await, before publishing its pixels or receipt.
+        guard token == geometry, last?.matches(layout) == true,
+              try liveBounds(layout.id, layout.pid) == layout.frame,
+              try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        let data = encoded.data, mime = encoded.mime
         var reply: [String:Any] = ["window":layout.id,"pid":layout.pid,"mime":mime,"sequence":sequence,
                 "contentWidth":layout.content.width,"contentHeight":layout.content.height,
                 "pixelWidth":content.width,"pixelHeight":content.height,"cropTop":layout.cropTop,

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createMacWindowInput } from "./macos-window-input.mjs";
 
-function fixture() {
+function fixture({ request, onWindowChanged } = {}) {
   let current = { pid: 23, window: 70, geometry: "geometry-1" }, visible = true;
   const calls = [], errors = [], captured = new Set(), eventWindow = new EventTarget();
   const element = Object.assign(new EventTarget(), {
@@ -16,8 +16,8 @@ function fixture() {
   });
   const input = createMacWindowInput({
     element, frame: () => current, active: () => visible,
-    request: async (action, fields) => { calls.push({ action, ...fields }); return { ok: true }; },
-    onError: error => errors.push(error), eventWindow,
+    request: async (action, fields) => { calls.push({ action, ...fields }); return request ? request(action, fields) : { ok: true }; },
+    onError: error => errors.push(error), onWindowChanged, eventWindow,
   });
   input.setKeyboardTarget({ focus() {}, classList: { add() {} } });
   const pointer = (type, fields = {}) => {
@@ -142,7 +142,7 @@ test("a frame change rejects queued input and disposal releases only its connect
   f.changeTarget();
   release();
   await gate;
-  await assert.rejects(drained, /输入窗口已变化/);
+  await assert.rejects(drained, { code: "window_changed" });
   assert.deepEqual(f.calls.map(call => call.action), ["input-reset"]);
   f.input.dispose();
   const count = f.calls.length;
@@ -150,4 +150,94 @@ test("a frame change rejects queued input and disposal releases only its connect
   f.eventWindow.dispatchEvent(new Event("blur"));
   await assert.rejects(f.input.run(() => {}), /连接已关闭/);
   assert.equal(f.calls.length, count);
+});
+
+test("a rejected user click requests recovery after releasing input without replaying the click", async () => {
+  const recovered = [];
+  const f = fixture({
+    request: async action => {
+      if (action === "pointer") throw Object.assign(new Error("window changed"), { code: "window_changed" });
+      return { ok: true };
+    },
+    onWindowChanged: () => recovered.push(f.calls.map(call => call.action)),
+  });
+  try {
+    f.pointer("pointerdown");
+    await assert.rejects(f.input.run(() => {}), /window changed/);
+    assert.deepEqual(recovered, [["pointer", "input-reset"]]);
+    assert.equal(f.calls.filter(call => call.action === "pointer").length, 1);
+  } finally { f.input.dispose(); }
+});
+
+test("hover and unrelated failures never activate a background guest application", async () => {
+  for (const [phase, code] of [["pointermove", "window_changed"], ["pointerdown", "identity_error"], ["pointerdown", "input_owned_by_another_view"]]) {
+    let recovered = 0;
+    const f = fixture({
+      request: async action => {
+        if (action === "pointer") throw Object.assign(new Error(code), { code });
+        return { ok: true };
+      },
+      onWindowChanged: () => recovered++,
+    });
+    try {
+      f.pointer(phase, { buttons: phase === "pointermove" ? 0 : 1 });
+      if (phase === "pointermove") {
+        await f.input.run(() => {});
+        assert.deepEqual(f.errors, []);
+      } else await assert.rejects(f.input.run(() => {}), new RegExp(code));
+      assert.equal(recovered, 0);
+    } finally { f.input.dispose(); }
+  }
+});
+
+test("keyboard focus loss cancels the queued Enter and requests a fresh view once", async () => {
+  let recovered = 0;
+  const f = fixture({
+    request: async action => {
+      if (action === "key") throw Object.assign(new Error("window changed"), { code: "window_changed" });
+      return { ok: true };
+    },
+    onWindowChanged: () => recovered++,
+  });
+  try {
+    f.input.sendKey(97, "KeyA", true);
+    f.input.sendKey(0xff0d, "Enter", true);
+    await assert.rejects(f.input.run(() => {}), /window changed/);
+    assert.equal(recovered, 1);
+    assert.deepEqual(f.calls.map(call => call.action), ["key", "input-reset"]);
+    assert.equal(f.calls[0].code, "KeyA");
+  } finally { f.input.dispose(); }
+});
+
+test("text and active composition can recover, but passive IME status cannot", async () => {
+  for (const [action, fields, expected] of [["text", { text: "fixture" }, 1], ["ime", { mode: "begin" }, 1], ["ime", { mode: "status" }, 0]]) {
+    let recovered = 0;
+    const f = fixture({
+      request: async value => {
+        if (value !== "input-reset") throw Object.assign(new Error("window changed"), { code: "window_changed" });
+        return { ok: true };
+      },
+      onWindowChanged: () => recovered++,
+    });
+    try {
+      await assert.rejects(f.input.send(action, fields), /window changed/);
+      assert.equal(recovered, expected);
+    } finally { f.input.dispose(); }
+  }
+});
+
+test("stale hover resets input without raising a layout-changing error", async () => {
+  const f = fixture();
+  let release;
+  const gate = f.input.run(() => new Promise(resolve => { release = resolve; }));
+  await Promise.resolve();
+  f.pointer("pointermove", { buttons: 0 });
+  const drained = f.input.run(() => {});
+  f.changeTarget(); release(); await gate;
+  await assert.rejects(drained, { code: "window_changed" });
+  assert.deepEqual(f.calls.map(call => call.action), ["input-reset"]);
+  assert.deepEqual(f.errors, []);
+  f.input.sendKey(97, "KeyA", true); await f.input.run(() => {});
+  assert.equal(f.calls.at(-1).geometry, "geometry-2");
+  f.input.dispose();
 });

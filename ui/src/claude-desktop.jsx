@@ -16,23 +16,21 @@ import { SafetyMessage } from "./safety-message";
 import { DeviceCheckButton } from "./device-checks";
 import { RemoteView } from "./views";
 import { useWindowVisibility } from "./window-visibility";
+import { readDesktopZoom } from "./macos-window-layout.mjs";
 import "./claude-desktop.css";
 
 const desktopZooms = [0.75, 0.9, 1, 1.1, 1.25, 1.5];
 
-export function useDesktopZoom(automatic = false) {
+export function useDesktopZoom(automatic = false, preferenceKey = automatic ? "cage-windows-desktop-zoom" : "cage-desktop-zoom") {
   const [zoom, setZoom] = useState(() => {
     try {
-      const stored = localStorage.getItem(automatic ? "cage-windows-desktop-zoom" : "cage-desktop-zoom");
-      if (automatic && (stored === null || stored === "auto")) return "auto";
-      const value = Number(stored);
-      return desktopZooms.includes(value) ? value : automatic ? "auto" : 1;
+      return readDesktopZoom(localStorage, automatic, preferenceKey);
     } catch { return automatic ? "auto" : 1; }
   });
   return [zoom, setZoom];
 }
 
-export function DesktopToolbar({ desktop, platform, title = "Claude Desktop", zoom, setZoom, onConfirm, onStop, busy, refresh, sidebarCollapsed, onExpand, children, automatic = false }) {
+export function DesktopToolbar({ desktop, platform, title = "Claude Desktop", zoom, setZoom, onConfirm, onStop, busy, refresh, refreshLabel = "刷新 " + title + " 状态", sidebarCollapsed, onExpand, children, automatic = false, zoomPreferenceKey = automatic ? "cage-windows-desktop-zoom" : "cage-desktop-zoom" }) {
   const [hidden, setHidden] = useState(() => {
     try { return localStorage.getItem("cage-desktop-toolbar-hidden") === "true"; }
     catch { return false; }
@@ -75,10 +73,10 @@ export function DesktopToolbar({ desktop, platform, title = "Claude Desktop", zo
             <InlineSelect aria-label="Desktop 显示大小" value={zoom} onValueChange={(next) => {
               const value = next === "auto" ? "auto" : Number(next);
               setZoom(value);
-              try { localStorage.setItem(automatic ? "cage-windows-desktop-zoom" : "cage-desktop-zoom", String(value)); } catch { /* Session-only preference. */ }
+              try { localStorage.setItem(zoomPreferenceKey, String(value)); } catch { /* Session-only preference. */ }
             }}>
               {automatic && <option value="auto">自适应（推荐）</option>}
-              {desktopZooms.map((value) => <option key={value} value={value}>{Math.round(value * 100)}%{value === 1 ? "（默认）" : ""}</option>)}
+              {desktopZooms.map((value) => <option key={value} value={value}>{Math.round(value * 100)}%{value === 1 && !automatic ? "（默认）" : ""}</option>)}
             </InlineSelect>
           </label>
         )}
@@ -103,7 +101,8 @@ export function DesktopToolbar({ desktop, platform, title = "Claude Desktop", zo
         )}
         <button
           className="icon-button"
-          aria-label={"刷新 " + title + " 状态"}
+          aria-label={refreshLabel}
+          title={refreshLabel}
           disabled={busy}
           onClick={refresh}
         >
