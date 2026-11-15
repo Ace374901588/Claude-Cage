@@ -86,6 +86,24 @@ enum MacSetupPassword {
                                     bundle: bundle, appleSigned: signed(app, bundle: bundle))
     }
 
+    // Quartz lists the WindowServer cursor as a high-level window. Its
+    // pixels follow the pointer, so counting it as an occluder revokes the
+    // authorization view as soon as the pointer enters the settings window.
+    // Accept only the exact cursor level and Apple's WindowServer identity.
+    static func allowsCursorSurface(layer: Int, appleSignedWindowServer: Bool) -> Bool {
+        layer == Int(CGWindowLevelForKey(.cursorWindow)) && appleSignedWindowServer
+    }
+
+    static func cursorSurface(pid: pid_t, layer: Int) -> Bool {
+        guard pid > 0, allowsCursorSurface(layer: layer, appleSignedWindowServer: true) else { return false }
+        var code: SecCode?, requirement: SecRequirement?
+        let verified = SecRequirementCreateWithString("anchor apple and identifier \"com.apple.WindowServer\"" as CFString,
+                                                     [], &requirement) == errSecSuccess &&
+            SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid as String: pid] as CFDictionary, [], &code) == errSecSuccess &&
+            code != nil && requirement != nil && SecCodeCheckValidity(code!, [], requirement!) == errSecSuccess
+        return allowsCursorSurface(layer: layer, appleSignedWindowServer: verified)
+    }
+
     private static func consoleSession() throws -> String {
         try consoleUser()
         let entry = IORegistryGetRootEntry(kIOMainPortDefault)
@@ -202,8 +220,8 @@ enum MacSetupPassword {
                   let rectangle = item[kCGWindowBounds as String] as? [String: Any], let bounds = CGRect(dictionaryRepresentation: rectangle as CFDictionary),
                   bounds.width > 0, bounds.height > 0, (item[kCGWindowAlpha as String] as? Double ?? 1) > 0,
                   let layer = item[kCGWindowLayer as String] as? Int else { return nil }
-            var surface = false
-            if layer > 0, abs(bounds.minX - display.minX) < 1, abs(bounds.minY - display.minY) < 1,
+            var surface = cursorSurface(pid: pid, layer: layer)
+            if !surface, layer > 0, abs(bounds.minX - display.minX) < 1, abs(bounds.minY - display.minY) < 1,
                abs(bounds.width - display.width) < 1, abs(bounds.height - display.height) < 1 {
                 if let cached = trustedSurfaces[pid] { surface = cached }
                 else {
@@ -260,6 +278,27 @@ enum MacSetupPassword {
         let panel = Window(id: 49, pid: 2338, bounds: CGRect(x: 830, y: 376, width: 260, height: 389), layer: 0)
         let overlay = Window(id: 8, pid: 613, bounds: display, layer: 20, systemSurface: true)
         guard try select(windows: [overlay, panel, parent], pid: panel.pid, bundle: "com.apple.systempreferences", display: display, accessibility: false).id == panel.id else { throw Failure(1, "setup_password_test_selection") }
+        let cursorLevel = Int(CGWindowLevelForKey(.cursorWindow))
+        guard allowsCursorSurface(layer: cursorLevel, appleSignedWindowServer: true),
+              !allowsCursorSurface(layer: cursorLevel, appleSignedWindowServer: false),
+              !allowsCursorSurface(layer: 0, appleSignedWindowServer: true),
+              !allowsCursorSurface(layer: cursorLevel - 1, appleSignedWindowServer: true) else {
+            throw Failure(1, "setup_password_test_cursor_identity")
+        }
+        let cursorBounds = CGRect(x: panel.bounds.midX, y: panel.bounds.midY, width: 23, height: 22)
+        let cursor = Window(id: 3, pid: 171, bounds: cursorBounds, layer: cursorLevel,
+                            systemSurface: allowsCursorSurface(layer: cursorLevel, appleSignedWindowServer: true))
+        guard try select(windows: [cursor, panel, parent], pid: panel.pid,
+                         bundle: "com.apple.systempreferences", display: display, accessibility: false).id == panel.id else {
+            throw Failure(1, "setup_password_test_cursor_overlap")
+        }
+        for intruder in [Window(id: 3, pid: 999, bounds: cursorBounds, layer: cursorLevel),
+                         Window(id: 3, pid: 171, bounds: panel.bounds, layer: 0)] {
+            do { _ = try select(windows: [intruder, panel, parent], pid: panel.pid,
+                                bundle: "com.apple.systempreferences", display: display, accessibility: false)
+                throw Failure(1, "setup_password_test_cursor_spoof") }
+            catch let error as Failure where error.code == 7 { }
+        }
         let ordinary = Window(id: 9, pid: 999, bounds: panel.bounds, layer: 0)
         for windows in [[parent], [ordinary, panel, parent], [Window(id: 9, pid: 999, bounds: display, layer: 20), panel, parent], [panel]] {
             do { _ = try select(windows: windows, pid: panel.pid, bundle: "com.apple.systempreferences", display: display, accessibility: false); throw Failure(1, "setup_password_test_accepted_invalid") }

@@ -125,7 +125,8 @@ enum MacMaintenance {
             let owner = window[kCGWindowOwnerPID as String] as? Int32
             if let owner, owner != front.processIdentifier,
                let layer = window[kCGWindowLayer as String] as? Int,
-               MacSetupPassword.desktopSurface(pid: owner, bounds: bounds, layer: layer, display: display) {
+               (MacSetupPassword.cursorSurface(pid: owner, layer: layer) ||
+                MacSetupPassword.desktopSurface(pid: owner, bounds: bounds, layer: layer, display: display)) {
                 continue
             }
             let app = owner.flatMap { NSRunningApplication(processIdentifier: $0) }

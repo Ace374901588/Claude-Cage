@@ -1,7 +1,7 @@
 Cage H264 local integration
 
 Base: c31d80cca5d8f79ae84e8b2e8ec3d7aa16020f3b (0.1.8-rc).
-Local version: 0.1.8-local.h264.7. Apple Silicon, macOS 14+; Python 3.11+ to package.
+Local version: 0.1.8-local.h264.7.1. Apple Silicon, macOS 14+; Python 3.11+ to package.
 
 The integrated main branch also includes current upstream changes. Build that
 complete source, including its current launcher and guest kit, with:
@@ -119,3 +119,11 @@ on disposable local content. Confirm H264 in the actual UI, and separately
 exercise image fallback. Record transport throughput and renderer-update rates
 with their different measurement boundaries. Do not infer total VM CPU/power
 savings from codec-process CPU measurements.
+
+Authorization cursor compatibility (h264.7.1):
+Quartz reports the real WindowServer cursor at CGWindowLevelKey.cursorWindow.
+The authorization/maintenance occlusion checks now exclude that surface only
+when the owning process satisfies Apple's com.apple.WindowServer signature
+requirement. Other levels, unsigned lookalikes, notifications and ordinary
+covering windows remain subject to the existing checks. No TCC or permission
+scope changes are included.
