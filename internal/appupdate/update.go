@@ -93,6 +93,13 @@ func Run(configPath string, args []string, output io.Writer) int {
 	if len(args) != 1 || (args[0] != "check" && args[0] != "download") {
 		return fail(errors.New("更新操作无效"))
 	}
+	// Local feature builds are maintained with their corresponding source and
+	// bundle. An upstream binary would silently discard the local integration.
+	if strings.Contains(version.Version, "-local.") {
+		state.Phase, state.Message = "manual", "本地定制版通过对应的本机安装包更新；更新前请保留源码与恢复备份。"
+		emit()
+		return 0
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	client, err := managedClient(ctx, configPath)

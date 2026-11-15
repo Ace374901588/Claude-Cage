@@ -79,8 +79,9 @@ function closeSession(session, endpoint, maintenance) {
   if (session) api(endpoint, { action: "close", session, ...(maintenance ? { maintenance } : {}) }).catch(() => {});
 }
 
-export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", label, setupActions, setupHint, setupStatus, setupError, autoOpen = false, managedCredential = false, onSessionClosed, onSettings }) {
-  const endpoint = initialSetup ? "/macos/first-setup" : maintenance ? "/macos/maintenance" : "/macos/login";
+export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", manualConsole = false, label, setupActions, setupHint, setupStatus, setupError, autoOpen = false, managedCredential = false, onSessionClosed, onSettings }) {
+  const windowView = Boolean(maintenance || manualConsole);
+  const endpoint = manualConsole ? "/macos/console" : initialSetup ? "/macos/first-setup" : maintenance ? "/macos/maintenance" : "/macos/login";
   const scope = maintenance ? { maintenance } : {};
   const [opened, setOpened] = useState(false);
   const [session, setSession] = useState("");
@@ -91,7 +92,7 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
   const [administrator, setAdministrator] = useState("");
   const [frameTarget, setFrameTarget] = useState(null);
   const [authorizationPassword, setAuthorizationPassword] = useState("");
-  const [zoomed, setZoomed] = useState(!initialSetup && !maintenance);
+  const [zoomed, setZoomed] = useState(!initialSetup && !windowView);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [aspect, setAspect] = useState(guestWidth / guestHeight);
   const lease = useRef(null);
@@ -108,7 +109,7 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
 
   const fitWidth = Math.min(size.width, size.height * aspect);
   // Keep a 320 × 200 logical region around the account controls visible.
-  const imageWidth = !zoomed ? fitWidth : initialSetup || maintenance ? fitWidth * 2 :
+  const imageWidth = !zoomed ? fitWidth : initialSetup || windowView ? fitWidth * 2 :
     Math.min(size.width * guestWidth / 320, size.height * aspect * guestHeight / 200);
   const imageHeight = imageWidth / aspect;
   const hasFrame = Boolean(frame);
@@ -137,7 +138,7 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
     setMessage("");
     setFrameError("");
     setRecovery("");
-    setZoomed(!initialSetup && !maintenance);
+    setZoomed(!initialSetup && !windowView);
     setOpened(true);
     try {
       const r = await api(endpoint, { action: "open", ...scope });
@@ -206,7 +207,7 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
   useLayoutEffect(() => {
     if (!opened || !stage.current) return;
     stage.current.scrollLeft = zoomed ? Math.max(0, (imageWidth - size.width) / 2) : 0;
-    stage.current.scrollTop = zoomed ? Math.max(0, imageHeight * (maintenance ? 0.5 : 0.85) - size.height * 0.5) : 0;
+    stage.current.scrollTop = zoomed ? Math.max(0, imageHeight * (windowView ? 0.5 : 0.85) - size.height * 0.5) : 0;
   }, [opened, hasFrame, zoomed, imageWidth, imageHeight, size.width, size.height]);
 
   useEffect(() => {
@@ -219,9 +220,9 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
         if (!alive || lease.current?.session !== session) return;
         if (r.closed) { setRecovery(r.recovery || ""); end(r.error || ""); onSessionClosed?.(); return; }
         if (r.image) {
-          if (maintenance && (!r.geometry || !Array.isArray(r.region) || r.region.length !== 4 || !r.region.every(Number.isInteger)))
+          if (windowView && (!r.geometry || !Array.isArray(r.region) || r.region.length !== 4 || !r.region.every(Number.isInteger)))
             throw new Error("客机维护画面缺少窗口定位，请更新组件后重试");
-          setFrameTarget(maintenance ? { geometry: r.geometry, region: r.region } : null);
+          setFrameTarget(windowView ? { geometry: r.geometry, region: r.region } : null);
           setFrame(`data:${r.mime === "image/jpeg" ? "image/jpeg" : "image/png"};base64,${r.image}`);
           setFrameError("");
         }
@@ -239,10 +240,10 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
     const owner = lease.current;
     if (!owner?.session) return;
     const geometry = shown.current.geometry;
-    if (maintenance && !geometry) { setMessage("请等待授权窗口画面后再操作"); return; }
+    if (windowView && !geometry) { setMessage("请等待授权窗口画面后再操作"); return; }
     chain.current = chain.current.then(async () => {
       if (lease.current !== owner) return;
-      const r = await api(endpoint, { action, session: owner.session, ...scope, ...(maintenance ? { geometry } : {}), ...data });
+      const r = await api(endpoint, { action, session: owner.session, ...scope, ...(windowView ? { geometry } : {}), ...data });
       if (lease.current !== owner) return;
       if (r.closed) { end(r.error || ""); onSessionClosed?.(); }
       else setMessage(r.error || "");
@@ -263,10 +264,10 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
   }
 
   function guestKey(e) {
-    if (maintenance && (e.metaKey || e.ctrlKey) && !e.altKey && e.code === "KeyA") {
+    if (windowView && (e.metaKey || e.ctrlKey) && !e.altKey && e.code === "KeyA") {
       e.preventDefault(); enqueue("select-all", {}); return;
     }
-    const code = keys[e.code] ?? (initialSetup || maintenance ? setupKeys[e.code] : undefined);
+    const code = keys[e.code] ?? (initialSetup || windowView ? setupKeys[e.code] : undefined);
     if (e.metaKey || e.ctrlKey || e.altKey || code === undefined) return;
     e.preventDefault();
     enqueue("key", { code, shift: e.shiftKey });
@@ -274,7 +275,7 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
 
   useEffect(() => {
     const element = stage.current;
-    if (!opened || (!initialSetup && !maintenance) || !element) return;
+    if (!opened || (!initialSetup && !windowView) || !element) return;
     const scroll = (event) => {
       const rect = imageRef.current?.getBoundingClientRect();
       if (!rect?.width || !rect.height || event.clientX < rect.left || event.clientX >= rect.right ||
@@ -292,7 +293,7 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
     };
     element.addEventListener("wheel", scroll, { passive: false });
     return () => element.removeEventListener("wheel", scroll);
-  }, [opened, initialSetup, maintenance, session]);
+  }, [opened, initialSetup, windowView, session]);
 
   function changeZoom(zoom) {
     setZoomed(zoom);
@@ -300,12 +301,12 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
   }
 
   return <>
-    <button type="button" ref={opener} disabled={disabled || opened} onClick={open}>{label || (initialSetup ? "打开客机系统设置" : maintenance ? "打开客机授权设置" : "登录客机账户")}</button>
+    <button type="button" ref={opener} disabled={disabled || opened} onClick={open}>{label || (manualConsole ? "客机维护桌面" : initialSetup ? "打开客机系统设置" : maintenance ? "打开客机授权设置" : "登录客机账户")}</button>
     {!opened && message && <span role="status">{message}</span>}
     {!opened && ["environment-update", "environment-restart"].includes(recovery) && onSettings &&
       <button type="button" onClick={onSettings}>{recovery === "environment-update" ? "查看环境组件" : "打开环境设置"}</button>}
     {opened && createPortal(
-      <div className="mac-login-fullscreen" data-mode={initialSetup ? "setup" : maintenance ? "maintenance" : "login"} role="dialog" aria-modal="true" aria-label={initialSetup ? "首次设置虚拟 Mac" : maintenance ? "恢复客机系统权限" : "登录虚拟 Mac"}
+      <div className="mac-login-fullscreen" data-mode={initialSetup ? "setup" : windowView ? "maintenance" : "login"} role="dialog" aria-modal="true" aria-label={manualConsole ? "客机维护桌面" : initialSetup ? "首次设置虚拟 Mac" : maintenance ? "恢复客机系统权限" : "登录虚拟 Mac"}
         onKeyDownCapture={(e) => {
           if (e.key === "F6") {
             e.preventDefault();
@@ -320,16 +321,16 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
         }}>
         <div className="mac-login-panel">
         <header className="mac-login-heading">
-          <h2>{initialSetup ? "虚拟 Mac 的系统设置" : maintenance ? "恢复客机系统权限" : "登录 macOS 客机"}</h2>
-          <p>{initialSetup ? "按下方提示完成当前授权，Cage 会自动检查。可以随时返回设置指引继续处理。" : maintenance ? "在当前系统设置窗口中完成授权。切换到其他客机应用或锁定后，画面会结束。" : "输入客机账户密码，按回车登录。"}</p>
+          <h2>{manualConsole ? "客机维护桌面" : initialSetup ? "虚拟 Mac 的系统设置" : maintenance ? "恢复客机系统权限" : "登录 macOS 客机"}</h2>
+          <p>{manualConsole ? "直接查看并手动操作当前虚拟 Mac。可收起遮挡窗口、完成系统设置授权。画面在锁定、切换账户或五分钟后关闭。" : initialSetup ? "按下方提示完成当前授权，Cage 会自动检查。可以随时返回设置指引继续处理。" : maintenance ? "在当前系统设置窗口中完成授权。切换到其他客机应用或锁定后，画面会结束。" : "输入客机账户密码，按回车登录。"}</p>
         </header>
         <div className="mac-login-tools" role="toolbar" aria-label="画面工具">
           <button ref={back} onClick={() => end()}><ArrowLeft size={16} aria-hidden="true" />{initialSetup ? "返回设置指引" : "返回工作台"}</button>
-          <button aria-pressed={!zoomed} onClick={() => changeZoom(false)}><Maximize size={16} aria-hidden="true" />{initialSetup || maintenance ? "适配" : "完整画面"}</button>
-          <button aria-pressed={zoomed} onClick={() => changeZoom(true)}><ZoomIn size={16} aria-hidden="true" />{initialSetup || maintenance ? "放大" : "登录区域"}</button>
+          <button aria-pressed={!zoomed} onClick={() => changeZoom(false)}><Maximize size={16} aria-hidden="true" />{initialSetup || windowView ? "适配" : "完整画面"}</button>
+          <button aria-pressed={zoomed} onClick={() => changeZoom(true)}><ZoomIn size={16} aria-hidden="true" />{initialSetup || windowView ? "放大" : "登录区域"}</button>
           {initialSetup && setupActions}
           {initialSetup && managedCredential && <button disabled={!session} onClick={() => enqueue("fill-password",{})}>填写授权密码</button>}
-          {!maintenance && (!initialSetup || managedCredential) && <button onClick={async () => {
+          {!windowView && (!initialSetup || managedCredential) && <button onClick={async () => {
             const owner = lease.current;
             try {
               const result = await api(endpoint,{action:"show-password"});
@@ -391,18 +392,18 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", l
           {frame && <div className="mac-login-canvas" style={{
             width: Math.max(size.width, imageWidth), height: Math.max(size.height, imageHeight),
           }}>
-            <img ref={imageRef} key={maintenance ? frameTarget?.geometry : undefined} alt={initialSetup ? "Apple 客机首次系统设置" : maintenance ? "客机系统设置或授权窗口" : "Apple 客机登录屏幕"} draggable={false} src={frame}
+            <img ref={imageRef} key={windowView ? frameTarget?.geometry : undefined} alt={manualConsole ? "当前虚拟 Mac 桌面" : initialSetup ? "Apple 客机首次系统设置" : maintenance ? "客机系统设置或授权窗口" : "Apple 客机登录屏幕"} draggable={false} src={frame}
               style={{ width: imageWidth, height: imageHeight }}
               onLoad={(e) => {
                 if (e.currentTarget.naturalHeight) setAspect(e.currentTarget.naturalWidth / e.currentTarget.naturalHeight);
-                if (maintenance && frameTarget) shown.current = frameTarget;
+                if (windowView && frameTarget) shown.current = frameTarget;
               }} onClick={sendClick} />
           </div>}
         </div>
         {(visibleMessage || !frame) && <p className="mac-login-status" role={visibleMessage ? "alert" : "status"}>
-          {visibleMessage || (initialSetup ? "正在读取客机首次设置画面…" : maintenance ? "正在确认系统授权窗口…" : "正在确认客机登录画面…")}
+          {visibleMessage || (manualConsole ? "正在读取客机维护桌面…" : initialSetup ? "正在读取客机首次设置画面…" : maintenance ? "正在确认系统授权窗口…" : "正在确认客机登录画面…")}
         </p>}
-        {!initialSetup && !maintenance && <p className="mac-login-help">拖动画面可查看其他账户或提示</p>}
+        {!initialSetup && !windowView && <p className="mac-login-help">拖动画面可查看其他账户或提示</p>}
         </div>
       </div>, document.body)}
   </>;

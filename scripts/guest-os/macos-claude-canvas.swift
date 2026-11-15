@@ -147,7 +147,44 @@ final class ClaudeCanvasSession {
         return last
     }
 
-    func capture(_ window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas, after: String? = nil, wait: Bool = false, binary: Bool = false, phoneJPEG: Bool = false) async throws -> [String:Any] {
+    func captureVideo(_ window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas,
+                      after: String?, wait: Bool, videoSession: String) async throws -> [String: Any] {
+        let config = SCStreamConfiguration()
+        config.width = max(2, Int((layout.frame.width * layout.scale).rounded()))
+        config.height = max(2, Int((layout.frame.height * layout.scale).rounded()))
+        config.captureResolution = .best
+        config.colorSpaceName = CGColorSpace.sRGB
+        config.ignoreShadowsSingleWindow = true; config.showsCursor = false
+        if #available(macOS 14.2, *) { config.includeChildWindows = browser }
+        let geometry = record(layout)
+        let (pixels, sequence) = try await stream.frameBuffer(filter: filter, configuration: config,
+            identity: geometry, after: after, wait: wait)
+        guard try liveBounds(layout.id, layout.pid) == layout.frame, try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        guard let pixels else { return ["unchanged": true, "sequence": sequence, "geometry": geometry] }
+        let top = Int((layout.cropTop * CGFloat(CVPixelBufferGetHeight(pixels)) / layout.frame.height).rounded())
+        let encoded: MacEncodedVideoFrame
+        do {
+            encoded = try await MacWindowVideoEncoder.shared.encode(pixels, cropTop: top, stream: videoSession,
+                identity: geometry, keyFrame: after?.isEmpty != false)
+        } catch {
+            try Task.checkCancellation()
+            // The caller can continue with JPEG when hardware is temporarily
+            // unavailable. The browser then disables video for this connection.
+            return try await capture(window, filter: filter, layout: layout, after: after, wait: false,
+                binary: true, encoding: "jpeg")
+        }
+        guard token == geometry, last?.matches(layout) == true,
+              try liveBounds(layout.id, layout.pid) == layout.frame, try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        return ["window": layout.id, "pid": layout.pid, "mime": "video/h264", "sequence": sequence,
+            "contentWidth": layout.content.width, "contentHeight": layout.content.height,
+            "pixelWidth": encoded.width, "pixelHeight": encoded.height, "cropTop": layout.cropTop,
+            "resizable": layout.resizable, "geometry": geometry, "imageBytes": encoded.data,
+            "codec": encoded.codec, "description": encoded.description.base64EncodedString(),
+            "timestamp": encoded.timestamp, "keyFrame": encoded.keyFrame,
+            "encodeMilliseconds": encoded.encodeMilliseconds]
+    }
+
+    func capture(_ window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas, after: String? = nil, wait: Bool = false, binary: Bool = false, phoneJPEG: Bool = false, encoding: String = "png") async throws -> [String:Any] {
         let config = SCStreamConfiguration()
         config.width = max(1, Int((layout.frame.width*layout.scale).rounded()))
         config.height = max(1, Int((layout.frame.height*layout.scale).rounded()))
@@ -164,17 +201,17 @@ final class ClaudeCanvasSession {
               let content = image.cropping(to: CGRect(x:0,y:top,width:image.width,height:image.height-top)),
               try liveBounds(layout.id, layout.pid) == layout.frame,
               try owns(layout.pid) else { throw Failure(7, "window_changed") }
-        var data = phoneJPEG ? try phoneDesktopJPEG(content) : try pngData(content)
-        var mime = phoneJPEG ? "image/jpeg" : "image/png"
-        if data.count >= 8<<20 {
-            // Preserve native glyph density and geometry even on photo-heavy windows.
-            mime = "image/jpeg"
-            for quality in [0.93, 0.84] {
-                data = try encodedImage(content, type:.jpeg, properties:[kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
-                if data.count < 8<<20 { break }
-            }
-        }
-        guard data.count < 8<<20 else { throw Failure(8, "frame_limit") }
+        let encoded: MacEncodedWindowImage
+        do { encoded = try await MacWindowImageEncoder.shared.encode(content, encoding: encoding, phone: phoneJPEG) }
+        catch MacWindowEncodingError.frameLimit { throw Failure(8, "frame_limit") }
+        catch MacWindowEncodingError.invalidEncoding { throw Failure(8, "invalid_input") }
+        catch { throw Failure(8, "capture_failed") }
+        // Encoding now yields the GUI actor. Recheck the exact captured window
+        // and geometry after the await, before publishing its pixels or receipt.
+        guard token == geometry, last?.matches(layout) == true,
+              try liveBounds(layout.id, layout.pid) == layout.frame,
+              try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        let data = encoded.data, mime = encoded.mime
         var reply: [String:Any] = ["window":layout.id,"pid":layout.pid,"mime":mime,"sequence":sequence,
                 "contentWidth":layout.content.width,"contentHeight":layout.content.height,
                 "pixelWidth":content.width,"pixelHeight":content.height,"cropTop":layout.cropTop,

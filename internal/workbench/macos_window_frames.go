@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -17,19 +18,24 @@ import (
 )
 
 type macOSFrameHeader struct {
-	ImageLength   int     `json:"imageLength"`
-	MIME          string  `json:"mime,omitempty"`
-	Sequence      string  `json:"sequence,omitempty"`
-	Geometry      string  `json:"geometry,omitempty"`
-	Window        uint32  `json:"window,omitempty"`
-	PID           int32   `json:"pid,omitempty"`
-	ContentWidth  float64 `json:"contentWidth,omitempty"`
-	ContentHeight float64 `json:"contentHeight,omitempty"`
-	PixelWidth    int     `json:"pixelWidth,omitempty"`
-	PixelHeight   int     `json:"pixelHeight,omitempty"`
-	Unchanged     bool    `json:"unchanged,omitempty"`
-	Error         string  `json:"error,omitempty"`
-	Revision      uint64  `json:"revision,omitempty"`
+	ImageLength        int     `json:"imageLength"`
+	MIME               string  `json:"mime,omitempty"`
+	Sequence           string  `json:"sequence,omitempty"`
+	Geometry           string  `json:"geometry,omitempty"`
+	Window             uint32  `json:"window,omitempty"`
+	PID                int32   `json:"pid,omitempty"`
+	ContentWidth       float64 `json:"contentWidth,omitempty"`
+	ContentHeight      float64 `json:"contentHeight,omitempty"`
+	PixelWidth         int     `json:"pixelWidth,omitempty"`
+	PixelHeight        int     `json:"pixelHeight,omitempty"`
+	Unchanged          bool    `json:"unchanged,omitempty"`
+	Error              string  `json:"error,omitempty"`
+	Revision           uint64  `json:"revision,omitempty"`
+	Codec              string  `json:"codec,omitempty"`
+	Description        string  `json:"description,omitempty"`
+	Timestamp          int64   `json:"timestamp,omitempty"`
+	KeyFrame           bool    `json:"keyFrame"`
+	EncodeMilliseconds float64 `json:"encodeMilliseconds,omitempty"`
 }
 
 // Each record contains a big-endian JSON length, metadata, and the original
@@ -69,6 +75,12 @@ func readMacOSFrame(reader io.Reader) (macOSFrameHeader, []byte, error) {
 	if _, err := io.ReadFull(reader, data); err != nil {
 		return header, nil, err
 	}
+	if header.MIME == "video/h264" {
+		if err := validateMacOSVideoFrame(header, data); err != nil {
+			return header, nil, err
+		}
+		return header, data, nil
+	}
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || (format != "png" && format != "jpeg") || header.MIME != "image/"+format ||
 		config.Width != header.PixelWidth || config.Height != header.PixelHeight {
@@ -83,6 +95,7 @@ type macOSFrameSubscription struct {
 	Scale    float64 `json:"scale"`
 	Revision uint64  `json:"revision"`
 	Ack      string  `json:"ack"`
+	Video    bool    `json:"video,omitempty"`
 }
 
 // Frame waits have their own SSH channel so input never queues behind capture.
@@ -117,10 +130,11 @@ func (s *Server) macOSWindowFrames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { cancel(); input.Close(); output.Close(); _ = cmd.Wait() }()
-	relayMacOSFrames(ctx, ws, input, output, macOSBrowserWindowRoute(r))
+	relayMacOSFrames(ctx, ws, input, output, macOSBrowserWindowRoute(r), s.macOSFramePolicy())
 }
 
-func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.WriteCloser, output io.ReadCloser, browser bool) {
+func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.WriteCloser, output io.ReadCloser, browser bool, policy macOSFramePolicy) {
+	videoSession := rand.Text()
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	stop := context.AfterFunc(ctx, func() { input.Close(); output.Close(); ws.Close() })
@@ -187,6 +201,10 @@ func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.Write
 			After: after, KeepAlive: true, Wait: true, Binary: true, Refresh: true}
 		if browser {
 			request.Surface, request.Action = "browser", "browser-frame"
+		}
+		request = policy.apply(request)
+		if config.Video && policy.Encoding == "jpeg" {
+			request.Encoding, request.VideoSession = "h264", videoSession
 		}
 		body, _ := json.Marshal(request)
 		timer := time.AfterFunc(12*time.Second, func() { cancel(); output.Close(); ws.Close() })

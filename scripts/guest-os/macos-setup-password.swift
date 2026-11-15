@@ -66,6 +66,25 @@ enum MacSetupPassword {
             code != nil && requirement != nil && SecCodeCheckValidity(code!, [], requirement!) == errSecSuccess
     }
 
+    // Desktop widgets create a full-display surface even with an application
+    // in front. Accept only the same Apple-signed surfaces used by the password
+    // probe; partial notifications and ordinary covering windows still block.
+    static func allowsDesktopSurface(bounds: CGRect, display: CGRect, layer: Int,
+                                     bundle: String, appleSigned: Bool) -> Bool {
+        layer > 0 && appleSigned && ["com.apple.dock", "com.apple.notificationcenterui"].contains(bundle) &&
+            abs(bounds.minX - display.minX) < 1 && abs(bounds.minY - display.minY) < 1 &&
+            abs(bounds.width - display.width) < 1 && abs(bounds.height - display.height) < 1
+    }
+
+    static func desktopSurface(pid: pid_t, bounds: CGRect, layer: Int, display: CGRect) -> Bool {
+        guard layer > 0, abs(bounds.minX-display.minX) < 1, abs(bounds.minY-display.minY) < 1,
+              abs(bounds.width-display.width) < 1, abs(bounds.height-display.height) < 1,
+              let app = NSRunningApplication(processIdentifier: pid), let bundle = app.bundleIdentifier,
+              ["com.apple.dock", "com.apple.notificationcenterui"].contains(bundle) else { return false }
+        return allowsDesktopSurface(bounds: bounds, display: display, layer: layer,
+                                    bundle: bundle, appleSigned: signed(app, bundle: bundle))
+    }
+
     private static func consoleSession() throws -> String {
         try consoleUser()
         let entry = IORegistryGetRootEntry(kIOMainPortDefault)
@@ -186,8 +205,7 @@ enum MacSetupPassword {
                abs(bounds.width - display.width) < 1, abs(bounds.height - display.height) < 1 {
                 if let cached = trustedSurfaces[pid] { surface = cached }
                 else {
-                    if let app = NSRunningApplication(processIdentifier: pid), let owner = app.bundleIdentifier,
-                       ["com.apple.dock", "com.apple.notificationcenterui"].contains(owner) { surface = signed(app, bundle: owner) }
+                    surface = desktopSurface(pid: pid, bounds: bounds, layer: layer, display: display)
                     trustedSurfaces[pid] = surface
                 }
             }
@@ -225,6 +243,17 @@ enum MacSetupPassword {
               !allowsPasswordProcess(hostBundle: "com.apple.authorizationhost", hostPID: 613, fieldPID: 731,
                                      fieldBundle: "com.apple.settings.PrivacySecurity.extension", appleSigned: true) else { throw Failure(1, "setup_password_test_process_binding") }
         let display = CGRect(x: 0, y: 0, width: 1920, height: 1200)
+        for bundle in ["com.apple.dock", "com.apple.notificationcenterui"] {
+            guard allowsDesktopSurface(bounds: display, display: display, layer: 21, bundle: bundle, appleSigned: true),
+                  !allowsDesktopSurface(bounds: display, display: display, layer: 21, bundle: bundle, appleSigned: false),
+                  !allowsDesktopSurface(bounds: CGRect(x: 1200, y: 0, width: 720, height: 400), display: display, layer: 21, bundle: bundle, appleSigned: true),
+                  !allowsDesktopSurface(bounds: display, display: display, layer: 0, bundle: bundle, appleSigned: true) else {
+                throw Failure(1, "setup_password_test_desktop_surface")
+            }
+        }
+        guard !allowsDesktopSurface(bounds: display, display: display, layer: 21, bundle: "com.apple.finder", appleSigned: true) else {
+            throw Failure(1, "setup_password_test_unknown_surface")
+        }
         let parent = Window(id: 38, pid: 2338, bounds: CGRect(x: 598, y: 258, width: 723, height: 625), layer: 0)
         let panel = Window(id: 49, pid: 2338, bounds: CGRect(x: 830, y: 376, width: 260, height: 389), layer: 0)
         let overlay = Window(id: 8, pid: 613, bounds: display, layer: 20, systemSurface: true)

@@ -86,7 +86,7 @@ func (s *Server) revokeMacLogin(session string) {
 func (s *Server) trackMacLogin(epoch context.Context, input guestos.MacLoginRequest, result guestos.MacLoginReply) {
 	if input.Action == "open" && result.Session != "" {
 		lifetime := s.lifetimeContext()
-		lease := &macLoginLease{request: guestos.MacLoginRequest{Action: "close", Session: result.Session, Setup: input.Setup, Maintenance: input.Maintenance}}
+		lease := &macLoginLease{request: guestos.MacLoginRequest{Action: "close", Session: result.Session, Setup: input.Setup, Maintenance: input.Maintenance, Console: input.Console}}
 		s.mu.Lock()
 		previous := s.macLoginLease
 		s.macLoginLease = lease
@@ -152,7 +152,20 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Setup = r.URL.Path == "/api/macos/first-setup"
-	if r.URL.Path == "/api/macos/maintenance" {
+	input.Console = r.URL.Path == "/api/macos/console"
+	if input.Console {
+		input.Maintenance = ""
+		if s.macSetupPending() {
+			http.Error(w, "请先完成虚拟 Mac 的首次设置", http.StatusConflict)
+			return
+		}
+		switch input.Action {
+		case "open", "close", "frame", "click", "key", "scroll", "select-all":
+		default:
+			http.Error(w, "客机维护桌面只接受手动操作", http.StatusBadRequest)
+			return
+		}
+	} else if r.URL.Path == "/api/macos/maintenance" {
 		if !guestos.ValidMacMaintenancePurpose(input.Maintenance) {
 			http.Error(w, "请选择需要恢复的客机系统权限", http.StatusBadRequest)
 			return
@@ -270,7 +283,7 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	timeout := 8 * time.Second
-	if input.Maintenance != "" {
+	if input.Maintenance != "" || input.Console {
 		timeout = 15 * time.Second
 	}
 	epoch, _ := s.account.accessFor(true)
@@ -291,7 +304,7 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "客机登录界面无法响应", 503)
 		return
 	}
-	if input.Maintenance != "" && result.MaintenanceVersion != 1 {
+	if input.Maintenance != "" && result.MaintenanceVersion != 1 || input.Console && result.ConsoleVersion != 1 {
 		result = guestos.MacLoginReply{Closed: true, Recovery: "environment-restart", Error: "虚拟 Mac 运行器需要重新加载。请保存工作，在环境设置中停止并重新启动虚拟 Mac，再打开授权设置。"}
 	}
 	s.trackMacLogin(epoch, input, result)

@@ -608,11 +608,12 @@ export function SettingsPanel({
                 {!status.storage_recovery?.required && <EnvironmentVersions status={status} onConfirm={onConfirm} />}
                 {status.guest_system === "macos" && <section aria-label="客机系统权限">
                   <h4>客机系统权限</h4>
-                  <p className="field-help">在受限的客机系统设置窗口中完成授权，Cage 会自动检查并重新连接项目。</p>
+                  <p className="field-help">在受限的客机系统设置窗口中完成授权，Cage 会自动检查并重新连接项目。授权页被遮挡时，可打开客机维护桌面手动处理。</p>
                   <div className="project-recovery-actions">
                     <MacOSLogin maintenance="projects" label="文件共享权限" disabled={!status.ready || busy} />
                     <MacOSLogin maintenance="screen" label="屏幕录制权限" disabled={!status.ready || busy} />
                     <MacOSLogin maintenance="input" label="辅助功能权限" disabled={!status.ready || busy} />
+                    <MacOSLogin manualConsole label="客机维护桌面" disabled={!status.vm_running || busy} />
                   </div>
                 </section>}
                 {!status.storage_recovery?.required && <ResourceSettings status={status} onConfirm={onConfirm} onDirtyChange={setResourceDirty} />}

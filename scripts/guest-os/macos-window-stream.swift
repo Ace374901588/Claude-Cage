@@ -93,7 +93,7 @@ final class MacWindowStream: NSObject, SCStreamOutput, SCStreamDelegate {
         return true
     }
 
-    func frame(filter: SCContentFilter, configuration: SCStreamConfiguration, identity: String, after: String?, wait: Bool = false) async throws -> (CGImage?, String) {
+    func frameBuffer(filter: SCContentFilter, configuration: SCStreamConfiguration, identity: String, after: String?, wait: Bool = false) async throws -> (CVPixelBuffer?, String) {
         expiry?.cancel()
         defer { renew() }
         if stream == nil || key != identity {
@@ -124,6 +124,12 @@ final class MacWindowStream: NSObject, SCStreamOutput, SCStreamDelegate {
         guard let buffer else { await stop(); throw Failure(8, "capture_no_frame") }
         let sequence = self.sequence
         if sequence == after { return (nil, sequence) }
+        return (buffer, sequence)
+    }
+
+    func frame(filter: SCContentFilter, configuration: SCStreamConfiguration, identity: String, after: String?, wait: Bool = false) async throws -> (CGImage?, String) {
+        let (buffer, sequence) = try await frameBuffer(filter: filter, configuration: configuration, identity: identity, after: after, wait: wait)
+        guard let buffer else { return (nil, sequence) }
         let image = CIImage(cvPixelBuffer: buffer)
         guard let output = images.createCGImage(image, from: image.extent) else { throw Failure(8, "capture_conversion_failed") }
         return (output, sequence)

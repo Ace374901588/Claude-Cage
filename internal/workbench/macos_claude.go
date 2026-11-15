@@ -25,50 +25,52 @@ func (s *Server) registerMacOSClaudeRoutes(mux routeRegistrar) {
 }
 
 type macOSWindowRequest struct {
-	Surface    string             `json:"surface,omitempty"`
-	Action     string             `json:"action"`
-	Project    string             `json:"project,omitempty"`
-	Nonce      string             `json:"nonce,omitempty"`
-	Width      int                `json:"width,omitempty"`
-	Height     int                `json:"height,omitempty"`
-	Scale      float64            `json:"scale,omitempty"`
-	Geometry   string             `json:"geometry,omitempty"`
-	Window     uint32             `json:"window,omitempty"`
-	PID        int32              `json:"pid,omitempty"`
-	X          *float64           `json:"x,omitempty"`
-	Y          *float64           `json:"y,omitempty"`
-	Delta      *float64           `json:"delta,omitempty"`
-	DeltaX     *float64           `json:"deltaX,omitempty"`
-	Text       string             `json:"text,omitempty"`
-	Key        string             `json:"key,omitempty"`
-	Code       string             `json:"code,omitempty"`
-	Down       *bool              `json:"down,omitempty"`
-	Phase      string             `json:"phase,omitempty"`
-	Button     *int               `json:"button,omitempty"`
-	Buttons    int                `json:"buttons,omitempty"`
-	Clicks     int                `json:"clicks,omitempty"`
-	Shift      bool               `json:"shift,omitempty"`
-	Cmd        bool               `json:"command,omitempty"`
-	Control    bool               `json:"control,omitempty"`
-	Alt        bool               `json:"alt,omitempty"`
-	Mode       string             `json:"mode,omitempty"`
-	Context    string             `json:"context,omitempty"`
-	Session    string             `json:"session,omitempty"`
-	After      string             `json:"after,omitempty"`
-	KeepAlive  bool               `json:"keepAlive,omitempty"`
-	Refresh    bool               `json:"refresh,omitempty"`
-	Wait       bool               `json:"wait,omitempty"`
-	Binary     bool               `json:"binary,omitempty"`
-	ID         string             `json:"id,omitempty"`
-	IDs        []string           `json:"ids,omitempty"`
-	Kind       string             `json:"kind,omitempty"`
-	Transfer   string             `json:"transfer,omitempty"`
-	Sequence   int                `json:"sequence"`
-	Path       string             `json:"path,omitempty"`
-	Error      string             `json:"error,omitempty"`
-	Files      []string           `json:"files,omitempty"`
-	Phone      *phoneSurfaceInput `json:"phone,omitempty"`
-	PhoneToken string             `json:"phone_token,omitempty"`
+	Surface      string             `json:"surface,omitempty"`
+	Action       string             `json:"action"`
+	Project      string             `json:"project,omitempty"`
+	Nonce        string             `json:"nonce,omitempty"`
+	Width        int                `json:"width,omitempty"`
+	Height       int                `json:"height,omitempty"`
+	Scale        float64            `json:"scale,omitempty"`
+	Encoding     string             `json:"encoding,omitempty"`
+	VideoSession string             `json:"videoSession,omitempty"`
+	Geometry     string             `json:"geometry,omitempty"`
+	Window       uint32             `json:"window,omitempty"`
+	PID          int32              `json:"pid,omitempty"`
+	X            *float64           `json:"x,omitempty"`
+	Y            *float64           `json:"y,omitempty"`
+	Delta        *float64           `json:"delta,omitempty"`
+	DeltaX       *float64           `json:"deltaX,omitempty"`
+	Text         string             `json:"text,omitempty"`
+	Key          string             `json:"key,omitempty"`
+	Code         string             `json:"code,omitempty"`
+	Down         *bool              `json:"down,omitempty"`
+	Phase        string             `json:"phase,omitempty"`
+	Button       *int               `json:"button,omitempty"`
+	Buttons      int                `json:"buttons,omitempty"`
+	Clicks       int                `json:"clicks,omitempty"`
+	Shift        bool               `json:"shift,omitempty"`
+	Cmd          bool               `json:"command,omitempty"`
+	Control      bool               `json:"control,omitempty"`
+	Alt          bool               `json:"alt,omitempty"`
+	Mode         string             `json:"mode,omitempty"`
+	Context      string             `json:"context,omitempty"`
+	Session      string             `json:"session,omitempty"`
+	After        string             `json:"after,omitempty"`
+	KeepAlive    bool               `json:"keepAlive,omitempty"`
+	Refresh      bool               `json:"refresh,omitempty"`
+	Wait         bool               `json:"wait,omitempty"`
+	Binary       bool               `json:"binary,omitempty"`
+	ID           string             `json:"id,omitempty"`
+	IDs          []string           `json:"ids,omitempty"`
+	Kind         string             `json:"kind,omitempty"`
+	Transfer     string             `json:"transfer,omitempty"`
+	Sequence     int                `json:"sequence"`
+	Path         string             `json:"path,omitempty"`
+	Error        string             `json:"error,omitempty"`
+	Files        []string           `json:"files,omitempty"`
+	Phone        *phoneSurfaceInput `json:"phone,omitempty"`
+	PhoneToken   string             `json:"phone_token,omitempty"`
 }
 
 func macOSBrowserWindowRoute(r *http.Request) bool {
@@ -97,6 +99,7 @@ var (
 )
 
 func (s *Server) macOSWindowRPC(w http.ResponseWriter, r *http.Request, input macOSWindowRequest) {
+	input = s.macOSFramePolicy().apply(input)
 	var reply []byte
 	var err error
 	if input.Action == "status" {

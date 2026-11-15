@@ -142,7 +142,7 @@ test("a frame change rejects queued input and disposal releases only its connect
   f.changeTarget();
   release();
   await gate;
-  await assert.rejects(drained, /输入窗口已变化/);
+  await assert.rejects(drained, { code: "window_changed" });
   assert.deepEqual(f.calls.map(call => call.action), ["input-reset"]);
   f.input.dispose();
   const count = f.calls.length;
@@ -150,4 +150,20 @@ test("a frame change rejects queued input and disposal releases only its connect
   f.eventWindow.dispatchEvent(new Event("blur"));
   await assert.rejects(f.input.run(() => {}), /连接已关闭/);
   assert.equal(f.calls.length, count);
+});
+
+test("stale hover resets input without raising a layout-changing error", async () => {
+  const f = fixture();
+  let release;
+  const gate = f.input.run(() => new Promise(resolve => { release = resolve; }));
+  await Promise.resolve();
+  f.pointer("pointermove", { buttons: 0 });
+  const drained = f.input.run(() => {});
+  f.changeTarget(); release(); await gate;
+  await assert.rejects(drained, { code: "window_changed" });
+  assert.deepEqual(f.calls.map(call => call.action), ["input-reset"]);
+  assert.deepEqual(f.errors, []);
+  f.input.sendKey(97, "KeyA", true); await f.input.run(() => {});
+  assert.equal(f.calls.at(-1).geometry, "geometry-2");
+  f.input.dispose();
 });

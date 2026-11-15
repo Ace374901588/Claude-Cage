@@ -1,0 +1,70 @@
+Cage H264 local integration
+
+Base: c31d80cca5d8f79ae84e8b2e8ec3d7aa16020f3b (0.1.8-rc).
+Local version: 0.1.8-local.h264.3. Apple Silicon, macOS 14+; Python 3.11+ to package.
+
+Build with the repository Go/Node/Swift build prerequisites available:
+  python3 scripts/build-h264-local.py --base-app /Applications/Cage.app --output /absolute/path/Cage-H264.app
+
+The pinned vendor app provides its unchanged proxy/runtime/native kit. The host
+and window helper are built from this checkout. A reviewed, unchanged helper
+can be reused with --guest-app /absolute/path/Cage-Guest-Window.app. This avoids
+changing the guest helper's signing identity for host-only updates. Check that
+the guest Swift sources are unchanged before reusing a previous helper.
+The builder requires a clean source checkout, records source/binary/patch
+hashes, and refuses existing output paths. It never installs into the guest,
+modifies TCC, replaces the vendor app, or overwrites a running Mach-O inode.
+
+Install the resulting app at a stable local path, for example
+/Applications/Cage H264.app. It uses a distinct application identifier and the
+existing Cage profile. Stop the other Cage instance before switching versions.
+Retain the original vendor application and guest helper/receipt/LaunchAgent
+backup before explicitly installing a changed local guest helper.
+
+Enable Settings > General > Prefer Smoothness, then start/restart the
+environment. The host caps scale at 1.5 and negotiates H264 when the guest
+advertises it and WebCodecs is available. Required hardware encoding prevents
+unintentional software-encoder fallback. Hardware acceleration on WebCodecs is
+a preference; actual decoder hardware usage is not claimed by the UI.
+Codec/capability/timeout/presentation failures switch to compatible images.
+Disable Prefer Smoothness and restart the environment to retain 2x PNG.
+
+Open "画面状态" in the browser/Claude Desktop toolbar to see the format
+actually acknowledged after decoding/drawing, pixel size, update rate, bytes
+per second and average processing times. Static content may report zero
+updates. These are renderer submissions, not physical display FPS or complete
+input-to-photon latency. The format is not inferred from the advertised codec.
+Video failure reasons are shown with a reconnect/retry action. Diagnostics log
+only fixed codec/reason names and numeric counters on mode change and close;
+no guest URL, page text, pixels or input content is included in these records.
+If guest login restores another foreground app after the browser opens, a
+capture_no_frame failure re-activates the explicitly open browser and rebuilds
+capture. Native window ownership, foreground and geometry checks stay intact.
+Stale hover/input is discarded without resizing the capture pane with an error
+banner; intentional input gets a nonblocking notice and is never replayed into
+another window. This avoids a resize/error feedback loop while views settle.
+
+Local version tags use a manual update channel. This prevents an ordinary
+upstream release from silently discarding the local integration. To upgrade,
+review/rebase the source, run relevant checks, rebuild to a new path, stop Cage,
+verify signatures/hashes and replace the local app atomically. Reuse an
+unchanged guest helper when possible. Developer ID signing/notarization and
+upstream publication are separate release steps, not implied by a local build.
+
+The local app remains ad hoc signed and unnotarized. Normal guest Screen
+Recording/Accessibility authorization may be required after changing helper
+signing identity. Never bypass signature checks or alter the TCC database.
+
+Validation:
+  npm --prefix ui test
+  npm --prefix ui run lint
+  go test ./internal/appupdate ./internal/workbench ./internal/maclogin ./internal/guestos
+  bash scripts/guest-os/build-macos-claude-window.sh /new/absolute/helper.app
+  /new/absolute/helper.app/Contents/MacOS/CageGuestWindow --setup-password-self-test
+  codesign --verify --deep --strict /absolute/path/Cage-H264.app
+
+Perform live capture/input/scroll/drag/resize/reconnect and cold-launch checks
+on disposable local content. Confirm H264 in the actual UI, and separately
+exercise image fallback. Record transport throughput and renderer-update rates
+with their different measurement boundaries. Do not infer total VM CPU/power
+savings from codec-process CPU measurements.

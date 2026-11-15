@@ -49,3 +49,27 @@ func TestOffscreenViewMatchesDirectoryAliases(t *testing.T) {
 		t.Fatal("offscreen view must be bound to an existing instance, including its socket path alias")
 	}
 }
+
+func TestManualConsoleRequiresOneUnlockedBoundSession(t *testing.T) {
+	const id = "607bceb6-c53f-4253-bad4-9c22b4ae7325"
+	const row = "<dict><key>kCGSSessionOnConsoleKey</key><true/><key>kCGSessionLoginDoneKey</key><true/><key>CGSSessionScreenIsLocked</key><false/><key>kCGSSessionUserIDKey</key><integer>502</integer><key>kCGSSessionUserNameKey</key><string>trial</string><key>CGSSessionUniqueSessionUUID</key><string>" + id + "</string></dict>"
+	const valid = "502 trial 502\n<plist><array>" + row + "</array></plist>"
+	for _, tc := range []struct{ name, input, want string }{
+		{"unlocked", valid, "console-" + id},
+		{"locked", strings.Replace(valid, "ScreenIsLocked</key><false/>", "ScreenIsLocked</key><true/>", 1), ""},
+		{"unlocked lock key omitted", strings.Replace(valid, "<key>CGSSessionScreenIsLocked</key><false/>", "", 1), "console-" + id},
+		{"wrong lock type", strings.Replace(valid, "ScreenIsLocked</key><false/>", "ScreenIsLocked</key><string>false</string>", 1), ""},
+		{"login screen", "system-login", ""},
+		{"another user", strings.ReplaceAll(valid, "trial", "other"), ""},
+		{"another uid", strings.Replace(valid, "502 trial 502", "503 trial 502", 1), ""},
+		{"duplicate session", strings.Replace(valid, "</array>", row+"</array>", 1), ""},
+		{"unfinished login", strings.Replace(valid, "LoginDoneKey</key><true/>", "LoginDoneKey</key><false/>", 1), ""},
+		{"trailing data", valid + "<", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := permittedMaintenanceConsole([]byte(tc.input), "trial"); got != tc.want {
+				t.Fatalf("allowed %q; want %q", got, tc.want)
+			}
+		})
+	}
+}

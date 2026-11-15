@@ -78,6 +78,11 @@ enum MacMaintenance {
                   let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary), bounds.width > 0, bounds.height > 0,
                   (window[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { continue }
             let owner = window[kCGWindowOwnerPID as String] as? Int32
+            if let owner, owner != front.processIdentifier,
+               let layer = window[kCGWindowLayer as String] as? Int,
+               MacSetupPassword.desktopSurface(pid: owner, bounds: bounds, layer: layer, display: display) {
+                continue
+            }
             if owner == front.processIdentifier && bounds.width >= 100 && bounds.height >= 60 {
                 let region = bounds.intersection(display)
                 guard !region.isNull, region.width >= 80, region.height >= 40,
