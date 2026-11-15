@@ -67,7 +67,8 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   const appName = browser ? "Google Chrome" : "Claude Desktop";
   const base = browser ? "/macos-browser" : "/macos/claude";
   const windowVisible = useWindowVisibility();
-  const screenVisible = visible && windowVisible;
+  const [webLoginOpen, setWebLoginOpen] = useState(false);
+  const screenVisible = visible && windowVisible && !webLoginOpen;
   const connection = useRef(null);
   const [inputChannel, setInputChannel] = useState(null);
   const frameConnection = useRef(null);
@@ -266,7 +267,9 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
       if (code === "window_changed" || message === messages.window_changed || message === "输入窗口已变化，请重新操作") {
         // Stale input is discarded and reset. Resizing capture with an error
         // banner here would create another geometry change and repeat it.
-        setError(""); current.current.onStatus(message); return;
+        setError("");
+        current.current.onStatus(browser ? message : "窗口已切换。网页登录请点上方“网页登录”；返回应用请刷新。");
+        return;
       }
       setError(message);
     };
@@ -346,9 +349,14 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   return <section className="claude-desktop-view mac-claude" aria-label={"虚拟 Mac 中的 " + appName}>
     <BrowserUploads requests={uploads} onStatus={onStatus} />
     <DesktopToolbar title={appName} desktop={state} platform="macOS" zoom={zoom} setZoom={setZoom} onConfirm={onConfirm}
-      onStop={browser ? undefined : () => action("stop")} refresh={() => refresh(n => n+1)} sidebarCollapsed={sidebarCollapsed} onExpand={onExpand}>
+      onStop={browser ? undefined : () => action("stop")} refresh={() => {
+        if (!browser && state?.running) void action("launch");
+        else refresh(n => n + 1);
+      }} sidebarCollapsed={sidebarCollapsed} onExpand={onExpand}>
       {browser && <BrowserFavorites ready={Boolean(state?.installed)} onOpen={onOpenPage} />}
       <MacOSLogin />
+      {!browser && <MacOSLogin manualConsole webSignIn label="网页登录" disabled={!state?.running}
+        onOpenChange={setWebLoginOpen} onReturn={() => void action("launch")} />}
       {displayStats?.format && <details className="mac-frame-status">
         <summary>画面状态</summary>
         <div className="mac-frame-status-panel">

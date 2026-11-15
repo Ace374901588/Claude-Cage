@@ -79,8 +79,10 @@ function closeSession(session, endpoint, maintenance) {
   if (session) api(endpoint, { action: "close", session, ...(maintenance ? { maintenance } : {}) }).catch(() => {});
 }
 
-export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", manualConsole = false, label, setupActions, setupHint, setupStatus, setupError, autoOpen = false, managedCredential = false, onSessionClosed, onSettings }) {
+export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", manualConsole = false, webSignIn = false, label, setupActions, setupHint, setupStatus, setupError, autoOpen = false, managedCredential = false, onSessionClosed, onSettings, onOpenChange, onReturn }) {
   const windowView = Boolean(maintenance || manualConsole);
+  const signIn = manualConsole && webSignIn;
+  const consoleTitle = signIn ? "Claude 网页登录" : "客机维护桌面";
   const endpoint = manualConsole ? "/macos/console" : initialSetup ? "/macos/first-setup" : maintenance ? "/macos/maintenance" : "/macos/login";
   const scope = maintenance ? { maintenance } : {};
   const [opened, setOpened] = useState(false);
@@ -128,6 +130,12 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", m
     setAuthorizationPassword("");
     setMessage(show);
     setFrameError("");
+    onOpenChange?.(false);
+  }
+
+  function returnToApp() {
+    end();
+    onReturn?.();
   }
 
   async function open() {
@@ -140,6 +148,7 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", m
     setRecovery("");
     setZoomed(!initialSetup && !windowView);
     setOpened(true);
+    onOpenChange?.(true);
     try {
       const r = await api(endpoint, { action: "open", ...scope });
       if (lease.current !== next) {
@@ -306,7 +315,7 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", m
     {!opened && ["environment-update", "environment-restart"].includes(recovery) && onSettings &&
       <button type="button" onClick={onSettings}>{recovery === "environment-update" ? "查看环境组件" : "打开环境设置"}</button>}
     {opened && createPortal(
-      <div className="mac-login-fullscreen" data-mode={initialSetup ? "setup" : windowView ? "maintenance" : "login"} role="dialog" aria-modal="true" aria-label={manualConsole ? "客机维护桌面" : initialSetup ? "首次设置虚拟 Mac" : maintenance ? "恢复客机系统权限" : "登录虚拟 Mac"}
+      <div className="mac-login-fullscreen" data-mode={initialSetup ? "setup" : windowView ? "maintenance" : "login"} role="dialog" aria-modal="true" aria-label={manualConsole ? consoleTitle : initialSetup ? "首次设置虚拟 Mac" : maintenance ? "恢复客机系统权限" : "登录虚拟 Mac"}
         onKeyDownCapture={(e) => {
           if (e.key === "F6") {
             e.preventDefault();
@@ -316,16 +325,16 @@ export function MacOSLogin({ disabled, initialSetup = false, maintenance = "", m
             keyboard.current?.focus({ preventScroll: true });
           } else if (e.key === "Escape" && (e.shiftKey || e.target !== keyboard.current)) {
             e.preventDefault();
-            end();
+            returnToApp();
           }
         }}>
         <div className="mac-login-panel">
         <header className="mac-login-heading">
-          <h2>{manualConsole ? "客机维护桌面" : initialSetup ? "虚拟 Mac 的系统设置" : maintenance ? "恢复客机系统权限" : "登录 macOS 客机"}</h2>
-          <p>{manualConsole ? "直接查看并手动操作当前虚拟 Mac。可收起遮挡窗口、完成系统设置授权。画面在锁定、切换账户或五分钟后关闭。" : initialSetup ? "按下方提示完成当前授权，Cage 会自动检查。可以随时返回设置指引继续处理。" : maintenance ? "在当前系统设置窗口中完成授权。切换到其他客机应用或锁定后，画面会结束。" : "输入客机账户密码，按回车登录。"}</p>
+          <h2>{manualConsole ? consoleTitle : initialSetup ? "虚拟 Mac 的系统设置" : maintenance ? "恢复客机系统权限" : "登录 macOS 客机"}</h2>
+          <p>{signIn ? "Google 等登录页面会在虚拟 Mac 的默认浏览器中打开。请在这里完成登录，再返回 Claude Desktop。此处显示整个客机桌面，画面在锁定、切换账户或五分钟后关闭。" : manualConsole ? "直接查看并手动操作当前虚拟 Mac。可收起遮挡窗口、完成系统设置授权。画面在锁定、切换账户或五分钟后关闭。" : initialSetup ? "按下方提示完成当前授权，Cage 会自动检查。可以随时返回设置指引继续处理。" : maintenance ? "在当前系统设置窗口中完成授权。切换到其他客机应用或锁定后，画面会结束。" : "输入客机账户密码，按回车登录。"}</p>
         </header>
         <div className="mac-login-tools" role="toolbar" aria-label="画面工具">
-          <button ref={back} onClick={() => end()}><ArrowLeft size={16} aria-hidden="true" />{initialSetup ? "返回设置指引" : "返回工作台"}</button>
+          <button ref={back} onClick={returnToApp}><ArrowLeft size={16} aria-hidden="true" />{signIn ? "返回 Claude Desktop" : initialSetup ? "返回设置指引" : "返回工作台"}</button>
           <button aria-pressed={!zoomed} onClick={() => changeZoom(false)}><Maximize size={16} aria-hidden="true" />{initialSetup || windowView ? "适配" : "完整画面"}</button>
           <button aria-pressed={zoomed} onClick={() => changeZoom(true)}><ZoomIn size={16} aria-hidden="true" />{initialSetup || windowView ? "放大" : "登录区域"}</button>
           {initialSetup && setupActions}

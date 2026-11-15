@@ -1,7 +1,7 @@
 Cage H264 local integration
 
 Base: c31d80cca5d8f79ae84e8b2e8ec3d7aa16020f3b (0.1.8-rc).
-Local version: 0.1.8-local.h264.3. Apple Silicon, macOS 14+; Python 3.11+ to package.
+Local version: 0.1.8-local.h264.5. Apple Silicon, macOS 14+; Python 3.11+ to package.
 
 Build with the repository Go/Node/Swift build prerequisites available:
   python3 scripts/build-h264-local.py --base-app /Applications/Cage.app --output /absolute/path/Cage-H264.app
@@ -44,6 +44,24 @@ Stale hover/input is discarded without resizing the capture pane with an error
 banner; intentional input gets a nonblocking notice and is never replayed into
 another window. This avoids a resize/error feedback loop while views settle.
 
+Claude's Google sign-in can open the guest's default browser (for example,
+Safari), outside the single Claude window and Cage's separate Chrome profile.
+Use "网页登录" in the Claude Desktop toolbar to explicitly open the existing,
+five-minute guest desktop and finish sign-in there. The single-window capture
+and its input connection pause while that desktop is open. "返回 Claude Desktop"
+closes the desktop and reactivates Claude; refreshing an already running
+Claude window also reactivates it. This sign-in path does not request additional
+guest permissions. Sign-in URLs, credentials and page content are not collected.
+
+Claude's pointerdown-driven menus (including the composer + button) receive
+the complete Quartz mouse down/up sequence, screen coordinates, drag events,
+modifiers and multi-click counts. AXPress no longer substitutes for those
+events. Before each physical event, the signed application/frame checks are
+followed by a system AX hit test and front-window ownership check. A covering
+app, another window or a stale foreground target causes input to be rejected.
+Disconnect cleanup releases held input only to its recorded process. This
+version changes the guest helper, so it cannot reuse an older helper binary.
+
 Local version tags use a manual update channel. This prevents an ordinary
 upstream release from silently discarding the local integration. To upgrade,
 review/rebase the source, run relevant checks, rebuild to a new path, stop Cage,
@@ -60,6 +78,8 @@ Validation:
   npm --prefix ui run lint
   go test ./internal/appupdate ./internal/workbench ./internal/maclogin ./internal/guestos
   bash scripts/guest-os/build-macos-claude-window.sh /new/absolute/helper.app
+  xcrun swiftc -parse-as-library scripts/guest-os/macos-window-pointer.swift scripts/guest-os/tests/macos-window-pointer-test.swift -o /tmp/cage-window-pointer-test
+  /tmp/cage-window-pointer-test
   /new/absolute/helper.app/Contents/MacOS/CageGuestWindow --setup-password-self-test
   codesign --verify --deep --strict /absolute/path/Cage-H264.app
 
