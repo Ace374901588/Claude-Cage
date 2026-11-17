@@ -396,7 +396,8 @@ npm() {
   if [ "$1" = config ]; then printf 'config\n' >> "$HOME/config-writes"; fi
   case "$1" in prefix|config) command npm "$@";; *) return 1;; esac
 }
-test "$(npm prefix --global)" = /usr
+previous_prefix="$(npm prefix --global)"
+test "$previous_prefix" != "$HOME/.local"
 cage_install_tool claude
 cage_install_tool claude
 grep -qx 'fund=false' "$HOME/.npmrc"
@@ -407,7 +408,7 @@ if [ "$TEST_INSTALL" = npm ]; then
   test "$(cat "$HOME/config-writes")" = config
 else
   test "$(cat "$HOME/.npmrc")" = 'fund=false'
-  test "$(npm prefix --global)" = /usr
+  test "$(npm prefix --global)" = "$previous_prefix"
   test ! -e "$HOME/config-writes"
 fi
 `)
