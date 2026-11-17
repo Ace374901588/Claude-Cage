@@ -46,7 +46,9 @@ def main():
         "source_head": head,
         "source_tree": git("rev-parse", "HEAD^{tree}"),
         "upstream_head": git("rev-parse", "upstream/main"),
-        "launcher_sha256": digest(bundle / "Contents/MacOS/Cage"),
+        # Signing the outer app changes its main executable's resource seal.
+        # Record that final executable hash outside the sealed bundle instead
+        # of creating a self-reference through this embedded manifest.
         "controller_sha256": digest(resources / "cage"),
         "guest_helper_sha256": digest(resources / "guest-os/Cage Guest Window.app/Contents/MacOS/CageGuestWindow"),
         "guest_helper_reused": False,
