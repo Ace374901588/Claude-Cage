@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -82,10 +82,22 @@ export function checkDependencies() {
   if (problems.length) throw new Error(problems.join('\n'));
 }
 
-function download(url, expected, dest) {
+export function download(url, expected, dest) {
+  if (!/^[a-f0-9]{64}$/.test(expected)) throw new Error('Source download requires a pinned SHA-256.');
   mkdirSync(dirname(dest), { recursive: true });
-  run('curl', ['--fail', '--location', '--silent', '--show-error', '--proto', '=https', '--proto-redir', '=https', '--retry', '2', '--connect-timeout', '20', '--max-time', '240', url, '-o', dest]);
+  const cacheRoot = process.env.CAGE_SSHFS_SOURCE_CACHE;
+  const cached = cacheRoot && join(cacheRoot, expected);
+  if (cached && existsSync(cached)) copy(cached, dest);
+  else run('curl', ['--fail', '--location', '--silent', '--show-error', '--proto', '=https', '--proto-redir', '=https', '--retry', '2', '--connect-timeout', '20', '--max-time', '240', url, '-o', dest]);
+  // Verify the copied bytes too: a partial, changed or poisoned cache must
+  // never become source input just because it has the expected filename.
   if (sha256(dest) !== expected) throw new Error(`Source checksum mismatch: ${basename(dest)}`);
+  if (cached && !existsSync(cached)) {
+    mkdirSync(cacheRoot, { recursive: true });
+    const stage = mkdtempSync(join(cacheRoot, '.source-'));
+    try { copy(dest, join(stage, 'verified')); renameSync(join(stage, 'verified'), cached); }
+    finally { rmSync(stage, { recursive: true, force: true }); }
+  }
 }
 
 export function extractLicenses(archive, output, component) {

@@ -1,10 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { extractLicenses, finish, inspectDependency, verifyArchive } from './guest-os/collect-macos-sshfs-sources.mjs';
+import { download, extractLicenses, finish, inspectDependency, verifyArchive } from './guest-os/collect-macos-sshfs-sources.mjs';
+
+test('source cache works offline and rejects modified bytes before extraction', t => {
+  const root = mkdtempSync(join(tmpdir(), 'cage-sshfs-cache-test-'));
+  const previous = process.env.CAGE_SSHFS_SOURCE_CACHE;
+  t.after(() => {
+    if (previous === undefined) delete process.env.CAGE_SSHFS_SOURCE_CACHE;
+    else process.env.CAGE_SSHFS_SOURCE_CACHE = previous;
+    rmSync(root, { recursive: true, force: true });
+  });
+  process.env.CAGE_SSHFS_SOURCE_CACHE = join(root, 'cache');
+  mkdirSync(process.env.CAGE_SSHFS_SOURCE_CACHE);
+  const bytes = Buffer.from('exact pinned upstream archive');
+  const expected = createHash('sha256').update(bytes).digest('hex');
+  const cache = join(process.env.CAGE_SSHFS_SOURCE_CACHE, expected);
+  writeFileSync(cache, bytes);
+  const output = join(root, 'source.tar');
+  download('https://offline.invalid/source.tar', expected, output);
+  assert.deepEqual(readFileSync(output), bytes);
+  writeFileSync(cache, 'modified or incomplete archive');
+  assert.throws(() => download('https://offline.invalid/source.tar', expected, output), /Source checksum mismatch/);
+});
 
 test('macOS guest source is bound to the final signed binary and release version', t => {
   const root = mkdtempSync(join(tmpdir(), 'cage-sshfs-source-test-'));
