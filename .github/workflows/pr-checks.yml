@@ -29,7 +29,7 @@ jobs:
           website=false
           while IFS= read -r -d '' path; do
             case "$path" in
-              README*.md|www/*|docs/guide/*|docs/releases/*) ;;
+              README*.md|www/*|docs/guide/*|docs/releases/*|assets/claude-cage-character.png|assets/community-browser-check-cropped.png|assets/community-browser-check.png|assets/community-qq.png|assets/community-wechat.png|assets/network-checks.png) ;;
               *) platforms=true ;;
             esac
             case "$path" in
@@ -53,6 +53,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/build-website
+        # PR artifacts validate the committed metadata. Publishing workflows
+        # keep the action default and verify current public releases.
+        with:
+          sync_release: 'false'
   merge-check:
     name: Main PR CI
     needs: [changes, platforms, website]

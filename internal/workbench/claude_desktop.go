@@ -40,6 +40,9 @@ print(json.dumps({'installed':installed,'version':package[1] if installed else '
 CAGE_DESKTOP_STATE`
 
 func (s *Server) claudeDesktopStatus(w http.ResponseWriter, r *http.Request) {
+	if s.remoteWindowsDesktopUnavailable(w) {
+		return
+	}
 	if !s.vmRunning() {
 		http.Error(w, "请先启动 Cage 环境", 409)
 		return
@@ -51,7 +54,7 @@ func (s *Server) claudeDesktopStatus(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		if s.windowsGuest != nil {
 			var result claudeDesktopState
-			if err := s.windowsDesktopRequest(ctx, "status", nil, &result); err != nil {
+			if err := s.windowsDesktopQuick(ctx, "status", nil, &result); err != nil {
 				return nil, err
 			}
 			return json.Marshal(result)
@@ -79,6 +82,9 @@ func (s *Server) claudeDesktopAction(w http.ResponseWriter, r *http.Request) {
 	}
 	var input struct{}
 	if !readJSON(w, r, &input) {
+		return
+	}
+	if s.remoteWindowsDesktopUnavailable(w) {
 		return
 	}
 	if !s.vmRunning() {
@@ -235,6 +241,9 @@ func validDisplayDensity(scale float64) bool {
 }
 
 func (s *Server) claudeDesktopResize(w http.ResponseWriter, r *http.Request) {
+	if s.remoteWindowsDesktopUnavailable(w) {
+		return
+	}
 	var input struct {
 		Width  int     `json:"width"`
 		Height int     `json:"height"`

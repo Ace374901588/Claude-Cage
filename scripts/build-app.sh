@@ -2,9 +2,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ "$(uname -s)" != Darwin ]]; then echo 'Cage.app must be built on macOS.' >&2; exit 1; fi
-case "${1:-}" in ''|--install|--macos-trial|--install-macos-trial|--intel-macos-test) ;; *) echo 'Usage: scripts/build-app.sh [--install|--macos-trial|--install-macos-trial|--intel-macos-test]' >&2; exit 2 ;; esac
+case "${1:-}" in ''|--install|--macos-trial|--install-macos-trial|--intel-macos-test|--h264-local) ;; *) echo 'Usage: scripts/build-app.sh [--install|--macos-trial|--install-macos-trial|--intel-macos-test|--h264-local]' >&2; exit 2 ;; esac
 bundle_id=io.github.lee-xeo.claude-cage
 app_name=Cage
+local_source_head=''
+if [[ "${1:-}" == --h264-local ]]; then
+  [[ $(uname -m) == arm64 ]] || { echo 'The local H264 package requires Apple Silicon.' >&2; exit 2; }
+  bundle_id+=.h264-local
+  app_name='Cage H264'
+  local_source_head=$(python3 scripts/h264-build-metadata.py check)
+fi
 if [[ "${1:-}" == *macos-trial ]]; then
   bundle_id+=.macos-trial
   app_name='Cage macOS'
@@ -47,6 +54,8 @@ export CAGE_SIGNING_IDENTITY="$identity"
 export MACOSX_DEPLOYMENT_TARGET=14.0
 export CGO_CFLAGS="${CGO_CFLAGS:-} -mmacosx-version-min=14.0"
 export CGO_LDFLAGS="${CGO_LDFLAGS:-} -mmacosx-version-min=14.0"
+command -v uv >/dev/null || { echo 'Building the workbench requires uv: https://docs.astral.sh/uv/getting-started/installation/' >&2; exit 1; }
+node scripts/guest-os/collect-macos-sshfs-sources.mjs check
 bash scripts/fetch-proxy-core.sh
 if [[ "$(uname -m)" == arm64 ]]; then
   bash scripts/guest-os/build-macos-guest-core.sh "$version"
@@ -122,6 +131,9 @@ fi
 "${sign[@]}" "$bundle/Contents/Resources/mihomo"
 "${sign[@]}" "$bundle/Contents/Resources/CageUpdateInstaller"
 "${account_signing[@]}" "$bundle/Contents/MacOS/Cage"
+if [[ -n "$local_source_head" ]]; then
+  python3 scripts/h264-build-metadata.py record "$bundle" "$local_source_head"
+fi
 "${account_signing[@]}" "$bundle"
 codesign --verify --deep --strict --verbose=2 "$bundle"
 # Keep the working App until the replacement has passed signature verification.

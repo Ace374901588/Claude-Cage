@@ -4,6 +4,7 @@ import { api, native, nativeAvailable } from "./api";
 import { useAccount } from "./account";
 import { MacOSLogin } from "./macos-login";
 import { DiagnosticSettings } from "./diagnostics.jsx";
+import { ScreenSharingChecks } from "./macos-screen-sharing";
 import { Modal } from "./modal";
 import "./initialization.css";
 
@@ -11,6 +12,7 @@ const steps = [
   { id: "screen", label: "窗口录制", hint: "打开 Cage Guest Window 的窗口录制开关。如果提示「退出并重新打开」，按提示操作。" },
   { id: "input", label: "辅助功能", hint: "打开 Cage Guest Window 的辅助功能开关，允许 Cage 操作客机窗口。" },
   { id: "projects", label: "文件系统扩展", hint: "打开 macFUSE 和 macFUSE (local) 两个开关，用于在客机中访问你选择的项目。" },
+  { id: "sharing", label: "屏幕共享", hint: "在「系统设置 → 通用 → 共享」中打开「屏幕共享」，并允许当前普通客机用户访问。确认开关已打开后，点击「已开启，重新检查」。Cage 会尝试连接客机的屏幕共享服务。" },
 ];
 
 export function MacOSFirstSetup() {
@@ -150,15 +152,19 @@ export function MacOSFirstSetup() {
     desktopWaiting ? "虚拟 Mac 正在完成首次登录并启动桌面，通常需要 1–3 分钟。桌面就绪后会自动打开第一项授权。" :
     readError ? "暂时无法确认权限状态，已显示的结果供参考。恢复连接后会继续检查。" :
     pending ? `当前需要确认「${pending.label}」。完成后 Cage 会自动检查并继续。` :
-    completionFailed ? "三项权限已验证，最后的设置收尾未完成。请重试完成设置。" : "三项权限已验证，正在保存设置；随后继续工作区授权和联网检查。";
-  const controls = <button type="button" className="primary" disabled={!canOperate} onClick={() => act(pending?.id || permissionPage)}>
+    completionFailed ? "四项权限已验证，最后的设置收尾未完成。请重试完成设置。" : "四项权限已验证，正在保存设置；随后继续工作区授权和联网检查。";
+  const sharingControls = <>
+    <button type="button" disabled={!canOperate} onClick={() => act("sharing")}>{busy ? "正在处理…" : "打开屏幕共享设置"}</button>
+    <button type="button" className="primary" disabled={!canOperate} onClick={() => act("confirm-sharing")}>{busy ? "正在检查…" : "已开启，重新检查"}</button>
+  </>;
+  const controls = pending?.id === "sharing" ? sharingControls : <button type="button" className="primary" disabled={!canOperate} onClick={() => act(pending?.id || permissionPage)}>
     {busy ? "正在处理…" : projectInstallation ? "打开 macFUSE 安装器" : `打开${pending?.label || selected.label}`}
   </button>;
   const failure = error || readError || (!running && state?.job?.error) || (!state?.ready && state?.environment_update_error);
 
   return <main className="initialization"><section className="initialization-content mac-setup-content">
     <div className="initialization-title"><p className="mac-setup-eyebrow">安装与检查 · macOS 系统权限</p><h1>完成虚拟 Mac 的系统授权</h1>
-      <p>安装文件和客机磁盘已保留。下面三项授权在虚拟 Mac 内完成，每项验证通过后会自动继续。</p></div>
+      <p>安装文件和客机磁盘已保留。下面四项授权在虚拟 Mac 内完成，每项验证通过后会自动继续。屏幕共享会检查服务是否启用且真正可连接。</p></div>
     <ol className="mac-setup-checklist" aria-label="系统授权进度">
       {steps.map(({ id, label }, index) => <li key={id} data-complete={Boolean(permissions[id])} aria-current={pending?.id === id ? "step" : undefined}>
         <span className="mac-setup-marker">{permissions[id] ? <Check size={16} aria-hidden="true" /> : index + 1}</span>
@@ -168,7 +174,10 @@ export function MacOSFirstSetup() {
     <section className="initialization-operation mac-setup-task" aria-label="当前设置步骤">
       <h2>{!state?.ready ? "连接虚拟 Mac" : pending ? `确认${pending.label}` : "完成系统设置"}</h2>
       <p role="status">{busy && <LoaderCircle size={16} className="spin" aria-hidden="true" />} {progress}</p>
-      {pending && state?.ready && <><p>{selectedHint}</p>{pending.id === "projects" && permissions.projects_error && <p>{permissions.projects_error}</p>}</>}
+      {pending && state?.ready && <><p>{selectedHint}</p>
+        {pending.id === "projects" && permissions.projects_error && <p>{permissions.projects_error}</p>}
+        {pending.id === "sharing" && <ScreenSharingChecks checks={permissions.sharing_checks} summary={permissions.sharing_summary} />}
+      </>}
       <div className="initialization-recovery">
         {state && !running && (!state.ready || account.macos_password_pending || state.job?.error) && <button className="primary" disabled={busy} onClick={() => act("start")}>{account.macos_password_pending ? "重试同步客机密码" : "继续启动并连接"}</button>}
         {pending && state?.ready && controls}
@@ -184,6 +193,7 @@ export function MacOSFirstSetup() {
     <details className="mac-setup-help"><summary>管理员密码与找不到设置页时的帮助</summary>
       <p>系统要求管理员时，用户名填 <strong>cagesetup</strong>，{account.macos_password_pending ? "密码同步完成前可能仍需原客机密码。" : account.macos_credentials_ready ? "密码与 Cage 账户相同。" : "在客机画面中选中密码框，再点击「填写授权密码」。"}你确认授权后继续；此临时管理员在收尾时停用。</p>
       <p>文件系统扩展的手动入口：客机「系统设置 → 通用 → 登录项与扩展 → 按类别 → 文件系统扩展」，同时打开 macFUSE 和 macFUSE (local)。</p>
+      <p>屏幕共享的手动入口：客机「系统设置 → 通用 → 共享」，打开「屏幕共享」并允许当前普通客机用户。</p>
       <div className="initialization-recovery">{steps.map(({ id, label }) => <button key={id} disabled={!canOperate} onClick={() => act(id)}>重新打开{label}</button>)}</div>
     </details>
     <p className="mac-setup-retention">系统授权完成后，还会确认共享工作区和网络隔离。全部检查通过后即可进入工作台。</p>

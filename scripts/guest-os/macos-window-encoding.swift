@@ -17,13 +17,37 @@ enum MacWindowEncodingError: Error {
 actor MacWindowImageEncoder {
     static let shared = MacWindowImageEncoder()
 
+    // JPEG has no alpha. Match the window's lower edge at rounded corners
+    // instead of compositing transparent pixels against black.
+    private func edgeColor(_ image: CGImage) -> CGColor? {
+        switch image.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: return nil
+        default: break
+        }
+        guard image.width > 40, image.height > 40,
+              let pixel = image.cropping(to: CGRect(x: 16, y: image.height - 17, width: 1, height: 1)),
+              let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard let data = context.data else { return nil }
+        let bytes = data.assumingMemoryBound(to: UInt8.self)
+        guard bytes[3] == 255 else { return nil }
+        return CGColor(red: CGFloat(bytes[0]) / 255, green: CGFloat(bytes[1]) / 255,
+                       blue: CGFloat(bytes[2]) / 255, alpha: 1)
+    }
+
     private func imageData(_ image: CGImage, type: UTType, quality: Double? = nil) throws -> Data {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, type.identifier as CFString, 1, nil) else {
             throw MacWindowEncodingError.captureFailed
         }
-        let properties = quality.map { [kCGImageDestinationLossyCompressionQuality: $0] as CFDictionary }
-        CGImageDestinationAddImage(destination, image, properties)
+        var properties: [CFString: Any] = [:]
+        if let quality {
+            properties[kCGImageDestinationLossyCompressionQuality] = quality
+            if let edge = edgeColor(image) { properties[kCGImageDestinationBackgroundColor] = edge }
+        }
+        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { throw MacWindowEncodingError.captureFailed }
         return data as Data
     }

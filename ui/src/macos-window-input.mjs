@@ -138,6 +138,9 @@ export function createMacWindowInput({ element, frame, active, request, onError,
   on(element, "pointercancel", reset);
   on(element, "lostpointercapture", () => { if (drag) reset(); });
   on(element, "contextmenu", event => event.preventDefault());
+  // A trackpad emits dozens of wheel events per second, while each request
+  // waits for the guest. Merge the ones still queued into a single scroll so
+  // the page follows the gesture instead of replaying a backlog afterwards.
   on(element, "wheel", event => {
     if (!active() || !frame()) return;
     event.preventDefault();
@@ -189,7 +192,7 @@ export function createMacWindowInput({ element, frame, active, request, onError,
     },
     dispose() {
       if (disposed) return;
-      disposed = true; move = undefined; keys.clear(); drag = undefined;
+      disposed = true; move = undefined; wheel = undefined; keys.clear(); drag = undefined;
       void request("input-reset").catch(() => {});
       listeners.forEach(remove => remove());
       keyboard = undefined;

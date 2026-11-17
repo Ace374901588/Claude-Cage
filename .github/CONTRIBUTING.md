@@ -38,7 +38,13 @@ Issue 按涉及的系统带有六个标签：`macOS 主机`、`Windows 主机`�
 
 源代码、配置、日志和附件中均不得包含密码、令牌、订阅链接等敏感信息。引用第三方代码时注明来源并保留所需许可。
 
+## 工作台构建
+
+macOS、Linux 和 Windows 的工作台构建都通过 `PATH` 上的 `uv` 运行 noVNC 补丁脚本。[uv 安装说明](https://docs.astral.sh/uv/getting-started/installation/) · [Windows 源码构建](../docs/windows.md#windows-源码构建)
+
 ## macOS 源码构建
+
+打包 SSHFS 需要经过审阅的 Homebrew 配方和静态库。Apple Silicon 使用 `glib`、`gettext`、`pcre2`，版本与配方摘要见 [SSHFS 依赖锁](../scripts/guest-os/macos-sshfs-dependencies.json)。Intel 仅从 Homebrew 取 `gettext`，其余两项由 Intel 依赖构建脚本按同一清单的 `intel` 节编译。可先运行 `node scripts/guest-os/collect-macos-sshfs-sources.mjs check`。如果 Homebrew 当前提供锁定版本，安装或升级本机依赖即可；配方发生变化时由维护者审阅锁定值。
 
 macOS 应用的构建入口是 `bash scripts/build-app.sh`，Apple Silicon 与 Intel 都会通过 `make cage` 构建嵌入式 Tailscale 客机组件。完整构建需要同时满足两个 Go 模块的最低版本：
 

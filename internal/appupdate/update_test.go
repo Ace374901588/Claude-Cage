@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/sylvinus/agent-vm/internal/host"
 	"github.com/sylvinus/agent-vm/internal/version"
 	"io"
 	"net/http"
@@ -15,6 +14,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sylvinus/agent-vm/internal/appupdate/catalog"
+	"github.com/sylvinus/agent-vm/internal/host"
 )
 
 func TestLocalFeatureBuildKeepsManualUpdatesWithoutReadingProfile(t *testing.T) {
@@ -38,16 +40,16 @@ func fixtureRelease(v string, pre bool) release {
 }
 func TestReleaseSelectionPreservesChannelsAndNumericPrereleases(t *testing.T) {
 	rs := []release{fixtureRelease("0.2.0-alpha.9", true), fixtureRelease("0.2.0-alpha.10", true), fixtureRelease("0.1.0", false)}
-	c, err := selectPlatformRelease(rs, "0.2.0-alpha.1", "darwin", "arm64")
+	c, err := catalog.Select(rs, "0.2.0-alpha.1", "darwin", "arm64")
 	if err != nil || c == nil || c.Version != "0.2.0-alpha.10" {
 		t.Fatalf("selected %#v: %v", c, err)
 	}
 	rs = append(rs, fixtureRelease("0.2.0", false), fixtureRelease("0.3.0-alpha.1", true))
-	c, err = selectPlatformRelease(rs, "0.1.0", "darwin", "arm64")
+	c, err = catalog.Select(rs, "0.1.0", "darwin", "arm64")
 	if err != nil || c == nil || c.Version != "0.2.0" {
 		t.Fatalf("stable channel %#v: %v", c, err)
 	}
-	if c, err = selectPlatformRelease(rs, "0.3.0", "darwin", "arm64"); err != nil || c != nil {
+	if c, err = catalog.Select(rs, "0.3.0", "darwin", "arm64"); err != nil || c != nil {
 		t.Fatalf("downgrade: %#v %v", c, err)
 	}
 }
@@ -62,7 +64,7 @@ func TestRejectReleaseAssetOutsideRepositoryOrOversize(t *testing.T) {
 	} {
 		r := fixtureRelease("0.2.0", false)
 		mutate(&r)
-		if c, err := selectPlatformRelease([]release{r}, "0.1.0", "darwin", "arm64"); err != nil || c != nil {
+		if c, err := catalog.Select([]release{r}, "0.1.0", "darwin", "arm64"); err != nil || c != nil {
 			t.Fatalf("accepted %#v: %v", c, err)
 		}
 	}
@@ -93,6 +95,7 @@ func TestDownloadVerifiesSizeDigestAndPrivateFile(t *testing.T) {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
 	a := fixtureRelease("0.2.0", false).Assets[0]
 	a.Size = int64(len(content))
+	downloadBackoff = 0
 	for _, tc := range []struct {
 		name, body, hash string
 		ok               bool
@@ -100,7 +103,7 @@ func TestDownloadVerifiesSizeDigestAndPrivateFile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "Cage.dmg")
 			var received int64
-			err := download(context.Background(), responseClient(tc.body, 200), a, tc.hash, path, func(n int64) { received = n })
+			err := download(context.Background(), responseClient(tc.body, 200), a, tc.hash, path, func(n int64) { received = n }, func() {})
 			if tc.ok {
 				b, e := os.ReadFile(path)
 				if err != nil || e != nil || string(b) != content || received != a.Size {
@@ -139,6 +142,9 @@ func TestChecksumListMustAgreeAndBelongToSameRelease(t *testing.T) {
 	}
 }
 func TestPrivateReleaseAndMissingProxyDoNotReportCurrent(t *testing.T) {
+	previous := version.Version
+	version.Version = "0.1.8"
+	t.Cleanup(func() { version.Version = previous })
 	// Keep this failure test independent of the host's actual network settings.
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	t.Setenv("NO_PROXY", "")

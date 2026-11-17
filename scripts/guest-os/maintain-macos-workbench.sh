@@ -138,7 +138,7 @@ while IFS= read -r -d '' source && IFS= read -r -d '' target; do
     stage=$(mktemp "$parent/.cage-component.XXXXXXXX")
     cp -p "$kit/$source" "$stage"
     case "$target" in
-        */controller/cage-tailnet|/usr/local/libexec/cage-register-*|/usr/local/libexec/cage-macos-editor|/usr/local/libexec/cage-sshfs|/usr/local/libexec/cage-guest-check|/usr/local/libexec/cage-macos-terminal|/usr/local/libexec/cage-finish-initial-setup|/usr/local/libexec/cage-macos-ipv6-check) chmod 755 "$stage" ;;
+        */controller/cage-tailnet|/usr/local/libexec/cage-enable-screensharing|/usr/local/libexec/cage-register-*|/usr/local/libexec/cage-macos-editor|/usr/local/libexec/cage-sshfs|/usr/local/libexec/cage-guest-check|/usr/local/libexec/cage-macos-terminal|/usr/local/libexec/cage-finish-initial-setup|/usr/local/libexec/cage-macos-ipv6-check) chmod 755 "$stage" ;;
         *) chmod a+r,go-w "$stage" ;;
     esac
     mv -f "$stage" "$target"
@@ -188,5 +188,8 @@ done
 # path. Migration failures retain the old application and can be retried.
 trap - EXIT
 rm -rf "$backup"
+# Guests set up before file indexing was turned off stop indexing here. Nobody
+# searches this hidden desktop; `mdutil -a -i on` turns it back on.
+mdutil -a -i off >/dev/null 2>&1 || true
 bash "$kit/claude-desktop-macos.sh" migrate "$user"
 printf '%s\n' '原生客机组件已更新并通过文件核验。'

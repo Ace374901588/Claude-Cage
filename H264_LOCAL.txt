@@ -1,12 +1,18 @@
 Cage H264 local integration
 
 Base: c31d80cca5d8f79ae84e8b2e8ec3d7aa16020f3b (0.1.8-rc).
-Local version: 0.1.8-local.h264.7.1. Apple Silicon, macOS 14+; Python 3.11+ to package.
+Local version: 0.1.8-local.h264.8. Apple Silicon, macOS 14+; Python 3.11+ to package.
 
 The integrated main branch also includes current upstream changes. Build that
 complete source, including its current launcher and guest kit, with:
-  bash scripts/build-app.sh
-This build does not install the application unless an install option is given.
+  CAGE_BUILD_OUTPUT=/absolute/path/Cage-H264.app bash scripts/build-app.sh --h264-local
+This H264 build uses its own bundle identity, rebuilds the current launcher and
+entire native guest kit, and records source and binary hashes in CageLocalBuild.json.
+It requires a clean committed checkout and does not install or launch the application.
+SSHFS build dependencies must match the upstream lock. Build-only unpacked
+Homebrew kegs can be selected with CAGE_SSHFS_GLIB_PREFIX,
+CAGE_SSHFS_PCRE2_PREFIX and CAGE_SSHFS_GETTEXT_PREFIX; the same receipt, version
+and recipe hash checks remain mandatory. This avoids relinking host libraries.
 H264, adaptive layout and native input are included in the normal source build.
 The .6 local binary tested before this integration remains a separate build;
 merging source does not update an installed application.
@@ -127,3 +133,10 @@ when the owning process satisfies Apple's com.apple.WindowServer signature
 requirement. Other levels, unsigned lookalikes, notifications and ordinary
 covering windows remain subject to the existing checks. No TCC or permission
 scope changes are included.
+
+Full-source upstream integration (h264.8):
+The upstream main changes through 3f17a01 are included. Window target/layout
+caching, asynchronous socket I/O and frame/input timing summaries coexist with
+H264, explicit image fallback, adaptive layout and the accepted trackpad fix.
+Native component updates use the current versioned kit and manifest, rather
+than replacing only the window helper from the historical vendor baseline.

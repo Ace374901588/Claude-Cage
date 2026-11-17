@@ -30,7 +30,7 @@ func macOSWorkbenchRoute(path string) bool {
 		return id == "requests" || id == "open" || browserFileID.MatchString(id)
 	}
 	switch path {
-	case "/api/macos/first-setup", "/api/appearance/codex", "/api/macos/project-approval", "/api/macos/exit-policy", "/api/macos/login", "/api/macos/maintenance", "/api/macos/console":
+	case "/api/environment/macos-screen-sharing", "/api/macos/first-setup", "/api/appearance/codex", "/api/macos/project-approval", "/api/macos/exit-policy", "/api/macos/login", "/api/macos/maintenance", "/api/macos/console":
 		return true
 	}
 	return strings.HasPrefix(path, "/api/macos/claude/") || strings.HasPrefix(path, "/api/macos-browser/")
@@ -277,13 +277,15 @@ func (s *Server) syncMacOSRegion(ctx context.Context, cfg cage.Config) error {
 
 func (s *Server) stopMacOSGuest() error {
 	s.mu.Lock()
-	s.macSetupProjectsChecked = time.Time{}
-	s.mu.Unlock()
-	s.closeWindowsBrowser()
-	s.mu.Lock()
 	s.ready = false
 	s.credentials.DisplayScale = 0
+	s.macSetupProjectsChecked = time.Time{}
+	s.macSetupSharingConfirmed = false
+	s.macSetupSharingAttempt = time.Time{}
+	s.macSetupSharingStatus = macOSScreenSharingStatus{}
 	s.mu.Unlock()
+	s.closeMacOSScreenSharing()
+	s.closeWindowsBrowser()
 	s.terminals.closeAll()
 	s.closeProjectShares()
 	return s.macOSLifecycleCommand("stop")

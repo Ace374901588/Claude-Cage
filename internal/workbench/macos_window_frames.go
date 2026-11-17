@@ -36,6 +36,11 @@ type macOSFrameHeader struct {
 	Timestamp          int64   `json:"timestamp,omitempty"`
 	KeyFrame           bool    `json:"keyFrame"`
 	EncodeMilliseconds float64 `json:"encodeMilliseconds,omitempty"`
+	CaptureMs          float64 `json:"captureMs,omitempty"`
+	EncodeMs           float64 `json:"encodeMs,omitempty"`
+	TargetMs           float64 `json:"targetMs,omitempty"`
+	LayoutMs           float64 `json:"layoutMs,omitempty"`
+	Cached             bool    `json:"cached,omitempty"`
 }
 
 // Each record contains a big-endian JSON length, metadata, and the original
@@ -130,10 +135,12 @@ func (s *Server) macOSWindowFrames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { cancel(); input.Close(); output.Close(); _ = cmd.Wait() }()
-	relayMacOSFrames(ctx, ws, input, output, macOSBrowserWindowRoute(r), s.macOSFramePolicy())
+	browser := macOSBrowserWindowRoute(r)
+	metrics := newFrameMetrics(map[bool]string{true: "browser", false: "claude"}[browser], s.recordFrameMetrics)
+	relayMacOSFrames(ctx, ws, input, output, browser, s.macOSFramePolicy(), metrics)
 }
 
-func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.WriteCloser, output io.ReadCloser, browser bool, policy macOSFramePolicy) {
+func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.WriteCloser, output io.ReadCloser, browser bool, policy macOSFramePolicy, metrics *frameMetrics) {
 	videoSession := rand.Text()
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -208,6 +215,7 @@ func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.Write
 		}
 		body, _ := json.Marshal(request)
 		timer := time.AfterFunc(12*time.Second, func() { cancel(); output.Close(); ws.Close() })
+		requested := time.Now()
 		_, err := input.Write(append(body, '\n'))
 		if err != nil {
 			timer.Stop()
@@ -218,6 +226,7 @@ func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.Write
 		if err != nil {
 			return
 		}
+		received := time.Since(requested)
 		mutex.Lock()
 		stale := config.Revision != latest.Revision
 		mutex.Unlock()
@@ -228,6 +237,7 @@ func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.Write
 			if after == "" || header.Sequence != after {
 				return
 			}
+			metrics.unchanged()
 			continue
 		}
 		header.Revision = config.Revision
@@ -248,6 +258,7 @@ func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.Write
 		if err != nil || closeErr != nil || header.Error != "" {
 			return
 		}
+		sent := time.Now()
 		after = header.Sequence
 		consumed := false
 		for !consumed {
@@ -256,6 +267,9 @@ func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.Write
 				return
 			case ack := <-acknowledged:
 				consumed = ack == after
+				if consumed {
+					metrics.frame(received, frameGuestTimes{header.TargetMs, header.LayoutMs, header.CaptureMs, header.EncodeMs, header.Cached}, len(pixels), time.Since(sent))
+				}
 			case <-changed:
 				mutex.Lock()
 				consumed = config.Revision != latest.Revision

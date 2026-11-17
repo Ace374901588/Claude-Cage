@@ -332,7 +332,23 @@ internal static class BrowserRpc
                     cachedPageFrame = (JsonObject)result.DeepClone();
                 }
                 AssertFrameEditors(result);
-                await BrowserWindowCapture.Decorate(browser!, result, async ()=>{var current=await Control(new JsonObject { ["method"] = "GET", ["path"] = "/frame-proof" }, timeout.Token);AssertEditorTab(current["id"]?.GetValue<string>());return current;});
+                var captureOwner = browser!;
+                async Task WaitForCapture(Task pending)
+                {
+                    // The controller reply has been fully drained. Only the
+                    // native image copy runs outside this serial wire owner.
+                    Gate.Release();
+                    try { await pending.WaitAsync(timeout.Token); }
+                    finally { await Gate.WaitAsync(); }
+                }
+                await BrowserWindowCapture.Decorate(captureOwner, result, async () =>
+                {
+                    if (!ReferenceEquals(browser, captureOwner)) throw new InvalidDataException("browser_target_changed");
+                    connection.ThrowIfCancellationRequested();
+                    var current = await Control(new JsonObject { ["method"] = "GET", ["path"] = "/frame-proof" }, timeout.Token);
+                    AssertEditorTab(current["id"]?.GetValue<string>());
+                    return current;
+                }, WaitForCapture);
                 AssertFrameEditors(result);
                 result = BrowserWindowCapture.FrameReply(result, afterFrame);
             }

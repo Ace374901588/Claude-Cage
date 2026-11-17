@@ -28,7 +28,7 @@ xcrun clang -arch "$CAGE_MACOS_NATIVE_ARCH" -mmacosx-version-min=14.0 -O2 -fobjc
 xcrun clang -arch "$CAGE_MACOS_NATIVE_ARCH" -mmacosx-version-min=14.0 -O2 -fobjc-arc -framework Foundation -framework IOKit "$src/macos-guest-identity.m" -o "$dest/cage-guest-check"
 xcrun clang -arch "$CAGE_MACOS_NATIVE_ARCH" -O2 "$src/macos-ipv6-check.c" -o "$dest/cage-macos-ipv6-check"
 bash "$src/package-macos-browser.sh" "$dest/native-browser"
-for f in macos-guest-arch.sh prepare-macos-media.sh macos-cli.py prepare-macos-cli-kit.sh install-macos-cli.sh claude-desktop-macos.sh install-macos-browser.sh install-macos-node.sh install-macos-project-tools.sh register-macos-claude-window.sh register-macos-clipboard.sh register-macos-browser.sh macos-browser.mjs cage-macos-editor macos-fuse-media.sh provision-macos-workbench.sh; do
+for f in macos-guest-arch.sh prepare-macos-media.sh macos-cli.py prepare-macos-cli-kit.sh install-macos-cli.sh claude-desktop-macos.sh install-macos-browser.sh install-macos-node.sh install-macos-project-tools.sh register-macos-claude-window.sh register-macos-clipboard.sh register-macos-browser.sh macos-browser.mjs cage-macos-editor macos-fuse-media.sh provision-macos-workbench.sh enable-macos-screensharing.sh; do
     cp "$src/$f" "$dest/"
 done
 cp "$src/../../internal/cage/"{claude-account.py,client_runtime.py} "$src/../../internal/workbench/"{cli_channel.py,cli_channel.resume.md,claude_account_resume.md} "$dest/"

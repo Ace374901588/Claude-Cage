@@ -42,8 +42,21 @@ private func liveBounds(_ id: CGWindowID, _ pid: pid_t) throws -> CGRect {
     return rect
 }
 
+// AXIsProcessTrusted asks tccd, which re-validates this helper's signature.
+// Input and layout ask on every event; a one-second answer is current enough.
+private final class AccessibilityTrust: @unchecked Sendable {
+    static let shared = AccessibilityTrust()
+    private let lock = NSLock()
+    private var checked = Date.distantPast, trusted = false
+    var current: Bool {
+        lock.lock(); defer { lock.unlock() }
+        if Date().timeIntervalSince(checked) >= 1 { trusted = AXIsProcessTrusted(); checked = Date() }
+        return trusted
+    }
+}
+
 func owningAXWindow(_ pid: pid_t, _ frame: CGRect) -> AXUIElement? {
-    guard AXIsProcessTrusted(), NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+    guard AccessibilityTrust.shared.current, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
           let raw = axAttribute(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute),
           CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
     let window = raw as! AXUIElement
@@ -53,7 +66,7 @@ func owningAXWindow(_ pid: pid_t, _ frame: CGRect) -> AXUIElement? {
 }
 
 func macApplicationWindowBounds(_ pid: pid_t) -> [CGRect] {
-    guard AXIsProcessTrusted(),
+    guard AccessibilityTrust.shared.current,
           let windows = axAttribute(AXUIElementCreateApplication(pid), kAXWindowsAttribute) as? [AXUIElement] else { return [] }
     return windows.compactMap(axRect)
 }
@@ -94,13 +107,57 @@ final class ClaudeCanvasSession {
 
     private var last: ClaudeCanvas?
     private var token = ""
+
+    // Finding the window (ScreenCaptureKit enumeration) and laying it out
+    // (Accessibility queries) dominate a frame on a virtual Mac. While the
+    // window keeps its bounds and the view keeps its size, reuse them for a
+    // short time; capture still verifies bounds and ownership on every frame.
+    private struct Target {
+        let window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas
+        let width: Int, height: Int, scale: Double, time: Date
+    }
+    private var target: Target?
+    private static let targetLifetime: TimeInterval = 2
+
+    func cachedTarget(width: Int, height: Int, scale: Double) -> (SCWindow, SCContentFilter, ClaudeCanvas)? {
+        guard let cached = target, cached.width == width, cached.height == height, cached.scale == scale,
+              Date().timeIntervalSince(cached.time) < Self.targetLifetime,
+              (try? liveBounds(cached.layout.id, cached.layout.pid)) == cached.layout.frame else {
+            target = nil
+            return nil
+        }
+        return (cached.window, cached.filter, cached.layout)
+    }
+
+    func remember(_ window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas, width: Int, height: Int, scale: Double) {
+        target = Target(window: window, filter: filter, layout: layout, width: width, height: height, scale: scale, time: Date())
+    }
+
+    func forgetTarget() { target = nil }
+
+    // Input reuses the window the frame stream already verified. Its geometry
+    // and focus are still checked by inputGeometry before every delivery.
+    func cachedWindow() -> SCWindow? {
+        guard let cached = target, Date().timeIntervalSince(cached.time) < Self.targetLifetime,
+              (try? liveBounds(cached.layout.id, cached.layout.pid)) == cached.layout.frame else { return nil }
+        return cached.window
+    }
     private var requested: (id: CGWindowID, pid: pid_t, target: CGRect, observed: CGRect, time: Date)?
+    // Each accessibility query is a round trip into the application. What they
+    // report follows the window's geometry, which every frame reads anyway.
+    private var measured: (id: CGWindowID, pid: pid_t, bounds: CGRect, width: Int, height: Int, crop: CGFloat, resized: Bool, time: Date)?
 
     func layout(_ window: SCWindow, filter: SCContentFilter, width: Int, height: Int, scale: Double) async throws -> ClaudeCanvas {
         guard let pid = window.owningApplication?.processID,
               (320...2560).contains(width), (240...1600).contains(height),
               scale.isFinite, (1...2).contains(scale) else { throw Failure(8, "invalid_input") }
         var bounds = try liveBounds(window.windowID, pid)
+        let density = min(max(1,CGFloat(filter.pointPixelScale)), CGFloat(scale))
+        if let known = measured, known.id == window.windowID, known.pid == pid, known.bounds == bounds,
+           known.width == width, known.height == height, Date().timeIntervalSince(known.time) < 1 {
+            return ClaudeCanvas(id: window.windowID, pid: pid, frame: bounds, cropTop: known.crop,
+                                scale: density, resizable: known.resized)
+        }
         var resized = false
         if let ax = owningAXWindow(pid, bounds) {
             let adjustable = MacWindowLayout.mayAdjust(
@@ -142,10 +199,10 @@ final class ClaudeCanvasSession {
                 resized = MacWindowLayout.agrees(bounds, wanted)
             }
         }
-        // Claude's unified titlebar also contains navigation and the chat
-        // title. Keep it in both capture and the input coordinate system.
+        // Keep the entire native titlebar in capture and input coordinates.
+        measured = (window.windowID, pid, bounds, width, height, 0, resized, Date())
         return ClaudeCanvas(id: window.windowID, pid: pid, frame: bounds, cropTop: 0,
-                            scale: min(max(1,CGFloat(filter.pointPixelScale)), CGFloat(scale)), resizable: resized)
+                            scale: density, resizable: resized)
     }
 
     func record(_ value: ClaudeCanvas) -> String {
@@ -172,8 +229,10 @@ final class ClaudeCanvasSession {
         config.ignoreShadowsSingleWindow = true; config.showsCursor = false
         if #available(macOS 14.2, *) { config.includeChildWindows = browser }
         let geometry = record(layout)
+        let captureStarted = Date()
         let (pixels, sequence) = try await stream.frameBuffer(filter: filter, configuration: config,
             identity: geometry, after: after, wait: wait)
+        let captureMs = Date().timeIntervalSince(captureStarted) * 1000
         guard try liveBounds(layout.id, layout.pid) == layout.frame, try owns(layout.pid) else { throw Failure(7, "window_changed") }
         guard let pixels else { return ["unchanged": true, "sequence": sequence, "geometry": geometry] }
         let top = Int((layout.cropTop * CGFloat(CVPixelBufferGetHeight(pixels)) / layout.frame.height).rounded())
@@ -196,7 +255,8 @@ final class ClaudeCanvasSession {
             "resizable": layout.resizable, "geometry": geometry, "imageBytes": encoded.data,
             "codec": encoded.codec, "description": encoded.description.base64EncodedString(),
             "timestamp": encoded.timestamp, "keyFrame": encoded.keyFrame,
-            "encodeMilliseconds": encoded.encodeMilliseconds]
+            "encodeMilliseconds": encoded.encodeMilliseconds, "encodeMs": encoded.encodeMilliseconds,
+            "captureMs": captureMs]
     }
 
     func capture(_ window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas, after: String? = nil, wait: Bool = false, binary: Bool = false, phoneJPEG: Bool = false, encoding: String = "png") async throws -> [String:Any] {
@@ -207,7 +267,11 @@ final class ClaudeCanvasSession {
         config.ignoreShadowsSingleWindow = true; config.showsCursor = false
         if #available(macOS 14.2, *) { config.includeChildWindows = browser }
         let geometry = record(layout)
+        // Timings let the host separate waiting for a new frame, encoding
+        // in the guest and the transport. They contain no window content.
+        let captureStarted = Date()
         let (updated, sequence) = try await stream.frame(filter: filter, configuration: config, identity: geometry, after: after, wait: wait)
+        let captureMs = Date().timeIntervalSince(captureStarted) * 1000
         guard try liveBounds(layout.id, layout.pid) == layout.frame,
               try owns(layout.pid) else { throw Failure(7, "window_changed") }
         guard let image = updated else { return ["unchanged": true, "sequence": sequence, "geometry": geometry] }
@@ -216,6 +280,7 @@ final class ClaudeCanvasSession {
               let content = image.cropping(to: CGRect(x:0,y:top,width:image.width,height:image.height-top)),
               try liveBounds(layout.id, layout.pid) == layout.frame,
               try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        let encodeStarted = Date()
         let encoded: MacEncodedWindowImage
         do { encoded = try await MacWindowImageEncoder.shared.encode(content, encoding: encoding, phone: phoneJPEG) }
         catch MacWindowEncodingError.frameLimit { throw Failure(8, "frame_limit") }
@@ -230,7 +295,8 @@ final class ClaudeCanvasSession {
         var reply: [String:Any] = ["window":layout.id,"pid":layout.pid,"mime":mime,"sequence":sequence,
                 "contentWidth":layout.content.width,"contentHeight":layout.content.height,
                 "pixelWidth":content.width,"pixelHeight":content.height,"cropTop":layout.cropTop,
-                "resizable":layout.resizable, "geometry":geometry]
+                "resizable":layout.resizable, "geometry":geometry,
+                "captureMs":captureMs.rounded(), "encodeMs":(Date().timeIntervalSince(encodeStarted) * 1000).rounded()]
         if binary { reply["imageBytes"] = data }
         else { reply["image"] = data.base64EncodedString() }
         return reply

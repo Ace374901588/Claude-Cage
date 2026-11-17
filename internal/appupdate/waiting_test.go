@@ -10,9 +10,13 @@ import (
 
 	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
+	"github.com/sylvinus/agent-vm/internal/version"
 )
 
 func TestUpdateCheckWaitsForProxyButDownloadReportsFailure(t *testing.T) {
+	previous := version.Version
+	version.Version = "0.1.8"
+	t.Cleanup(func() { version.Version = previous })
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	t.Setenv("NO_PROXY", "")
 	t.Setenv("no_proxy", "")

@@ -2,9 +2,21 @@ name: Three-platform checks and test packages
 on:
   # The website and user guides have their own workflow (www.yml) and are in
   # no package, so changes limited to them skip the three-platform builds.
+  # Branches are checked once, through their pull request (pr-checks.yml calls
+  # this workflow). A branch without a pull request can be run by hand.
   push:
-    branches: ['**', '!codex/release/**']
-    paths-ignore: ['README*.md', 'www/**', 'docs/guide/**', 'docs/releases/**']
+    branches: [main]
+    paths-ignore:
+      - 'README*.md'
+      - 'www/**'
+      - 'docs/guide/**'
+      - 'docs/releases/**'
+      - 'assets/claude-cage-character.png'
+      - 'assets/community-browser-check-cropped.png'
+      - 'assets/community-browser-check.png'
+      - 'assets/community-qq.png'
+      - 'assets/community-wechat.png'
+      - 'assets/network-checks.png'
   workflow_call:
   workflow_dispatch:
 permissions:
@@ -34,7 +46,7 @@ jobs:
         run: |
           node scripts/check-repository-files.mjs
           node scripts/check-version.mjs
-          node --test scripts/release-version.test.mjs scripts/release-control.test.mjs scripts/prepare-release-assets.test.mjs scripts/esigner.test.mjs scripts/contribution-invite.test.mjs scripts/issue-system-labels.test.mjs
+          node --test scripts/release-version.test.mjs scripts/release-control.test.mjs scripts/prepare-release-assets.test.mjs scripts/esigner.test.mjs scripts/contribution-invite.test.mjs scripts/issue-system-labels.test.mjs scripts/fetch-build-artifact.test.mjs
           pwsh -NoProfile -File scripts/test-windows-signing.ps1
       - name: Validate workflow syntax
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11 -color
@@ -73,7 +85,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.403
+          global-json-file: global.json
       - name: Install the verified NSIS compiler
         run: ./scripts/install-nsis.ps1
       - name: Install the verified WebView2 prerequisite

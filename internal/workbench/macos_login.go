@@ -42,13 +42,16 @@ func macOSSetupRoute(path string) bool {
 }
 
 type macSetupPermissions struct {
-	Screen                 bool   `json:"screen"`
-	Input                  bool   `json:"input"`
-	Projects               bool   `json:"projects"`
-	ProjectInstallRequired bool   `json:"project_install_required,omitempty"`
-	ProjectsError          string `json:"projects_error,omitempty"`
-	Error                  string `json:"error,omitempty"`
-	ManagedCredential      bool   `json:"managed_credential,omitempty"`
+	Screen                 bool                 `json:"screen"`
+	Input                  bool                 `json:"input"`
+	Projects               bool                 `json:"projects"`
+	ProjectInstallRequired bool                 `json:"project_install_required,omitempty"`
+	ProjectsError          string               `json:"projects_error,omitempty"`
+	Error                  string               `json:"error,omitempty"`
+	ManagedCredential      bool                 `json:"managed_credential,omitempty"`
+	Sharing                bool                 `json:"sharing"`
+	SharingSummary         string               `json:"sharing_summary,omitempty"`
+	SharingChecks          []screenSharingCheck `json:"sharing_checks,omitempty"`
 }
 
 type macLoginLease struct {
@@ -111,7 +114,7 @@ func (s *Server) trackMacLogin(epoch context.Context, input guestos.MacLoginRequ
 	}
 }
 
-func (s *Server) macSetupPermissions(ctx context.Context) (macSetupPermissions, error) {
+func (s *Server) macSetupPermissions(ctx context.Context, refreshSharing bool) (macSetupPermissions, error) {
 	var status macSetupPermissions
 	data, err := s.macOSWindowCall(ctx, macOSWindowRequest{Action: "setup-status"})
 	if err != nil {
@@ -140,6 +143,12 @@ func (s *Server) macSetupPermissions(ctx context.Context) (macSetupPermissions, 
 		s.mu.Lock()
 		status.Projects = !s.macSetupProjectsChecked.IsZero()
 		s.mu.Unlock()
+	}
+	if status.Screen && status.Input {
+		sharing := s.evaluateMacOSSetupSharing(ctx, refreshSharing)
+		status.Sharing = sharing.Satisfied
+		status.SharingSummary = sharing.Summary
+		status.SharingChecks = sharing.Checks
 	}
 	if install, err := guestos.LoadInstallation(s.profile); err == nil && install != nil {
 		password, err := s.account.savedMacGuestPassword(ctx, install.ID)
@@ -182,6 +191,14 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "维护画面只接受窗口查看与局部输入", http.StatusBadRequest)
 			return
 		}
+		if input.Maintenance == "sharing" && input.Action != "close" {
+			s.safetyOp.Lock()
+			defer s.safetyOp.Unlock()
+			if err := s.requireMacOSNetworkIsolated(r.Context()); err != nil {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+		}
 	} else {
 		input.Maintenance = ""
 	}
@@ -208,6 +225,10 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if input.Setup {
+		if input.Action == "sharing" {
+			s.safetyOp.Lock()
+			defer s.safetyOp.Unlock()
+		}
 		gate, err := s.gateClient()
 		if err != nil {
 			http.Error(w, "请先启动客机，确认首次设置期间外网已关闭", 409)
@@ -235,18 +256,24 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			input.Password = password
-		case "permissions", "verify-projects", "finish":
-			perm, err := s.macSetupPermissions(r.Context())
+		case "permissions", "verify-projects", "finish", "check-sharing", "confirm-sharing":
+			if input.Action == "confirm-sharing" {
+				s.mu.Lock()
+				s.macSetupSharingConfirmed = true
+				s.mu.Unlock()
+			}
+			refreshSharing := input.Action == "finish" || input.Action == "check-sharing" || input.Action == "confirm-sharing"
+			perm, err := s.macSetupPermissions(r.Context(), refreshSharing)
 			if err != nil {
 				http.Error(w, err.Error(), 409)
 				return
 			}
-			if input.Action == "permissions" {
+			if input.Action == "permissions" || input.Action == "check-sharing" || input.Action == "confirm-sharing" {
 				jsonReply(w, perm)
 				return
 			}
-			if input.Action == "finish" && (!perm.Screen || !perm.Input) {
-				http.Error(w, "请先完成窗口录制、辅助功能和文件系统扩展三项授权", 409)
+			if input.Action == "finish" && (!perm.Screen || !perm.Input || !perm.Sharing) {
+				http.Error(w, "请先完成窗口录制、辅助功能、文件系统扩展和屏幕共享授权", 409)
 				return
 			}
 			if !s.op.TryLock() {
@@ -272,7 +299,7 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "临时设置账户未关闭，请重试完成设置", 409)
 				return
 			}
-		case "screen", "input", "projects":
+		case "screen", "input", "projects", "sharing":
 			s.macOSWindowRPC(w, r, macOSWindowRequest{Action: "setup-" + input.Action})
 			return
 		case "open", "close", "frame", "click", "key", "scroll":

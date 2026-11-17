@@ -109,7 +109,7 @@ func testMacOSFrameStream(t *testing.T, browser bool, density float64, video boo
 			return
 		}
 		defer ws.Close()
-		relayMacOSFrames(r.Context(), ws, transport, transport, browser, makeMacOSFramePolicy(density))
+		relayMacOSFrames(r.Context(), ws, transport, transport, browser, makeMacOSFramePolicy(density), nil)
 	}))
 	defer server.Close()
 	s.origin = server.URL
