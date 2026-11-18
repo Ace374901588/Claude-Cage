@@ -13,7 +13,7 @@ import { useWindowVisibility } from "./window-visibility";
 import { createMacWindowConnection } from "./macos-window-connection.mjs";
 import { createMacFrameConnection } from "./macos-frame-connection.mjs";
 import { createMacWindowRecovery } from "./macos-window-recovery.mjs";
-import { macDesktopZoomKey, observeMacWindowViewport } from "./macos-window-layout.mjs";
+import { macDesktopZoomKey, macBrowserZoomKey, observeMacWindowViewport } from "./macos-window-layout.mjs";
 import { launchMacAppWhenReady } from "./macos-window-launch.mjs";
 import { reportDiagnostic, reportDisplayDiagnostic } from "./diagnostics.mjs";
 import "./macos-claude-window.css";
@@ -77,7 +77,8 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, networkRe
   const [inputChannel, setInputChannel] = useState(null);
   const frameConnection = useRef(null);
   const request = (action, fields) => windowRequest(base, action, fields, connection.current);
-  const [zoom, setZoom] = useDesktopZoom(true, macDesktopZoomKey);
+  const zoomPreferenceKey = browser ? macBrowserZoomKey : macDesktopZoomKey;
+  const [zoom, setZoom] = useDesktopZoom(true, zoomPreferenceKey);
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
   const [fileError, setFileError] = useState("");
@@ -128,6 +129,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, networkRe
         src: next.videoFrame ? undefined : next.src || `data:${next.mime === "image/jpeg" ? "image/jpeg" : "image/png"};base64,${next.image}`,
         window: next.window, pid: next.pid,
         geometry: next.geometry, width: next.contentWidth, height: next.contentHeight,
+        resizable: next.resizable === true,
         acknowledge: next.acknowledge,
       });
       setError("");
@@ -362,7 +364,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, networkRe
   if (!visible) return null;
   return <section className="claude-desktop-view mac-claude" aria-label={"虚拟 Mac 中的 " + appName}>
     {(browser || !nativeAvailable()) && <BrowserUploads requests={uploads} onStatus={onStatus} />}
-    <DesktopToolbar title={appName} desktop={state} platform="macOS" automatic zoomPreferenceKey={macDesktopZoomKey} zoom={zoom} setZoom={setZoom} onConfirm={onConfirm}
+    <DesktopToolbar title={appName} desktop={state} platform="macOS" automatic zoomPreferenceKey={zoomPreferenceKey} zoom={zoom} setZoom={setZoom} onConfirm={onConfirm}
       onStop={browser ? undefined : () => action("stop")} refresh={() => {
         if (!browser && state?.running && networkReady) void action("launch");
         else refresh(n => n + 1);
@@ -404,7 +406,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, networkRe
     {state && !state.installed && <p>此虚拟 Mac 尚未安装 {appName}。</p>}
     {state?.running && !state.screen && <p>{messages.screen_recording_permission}</p>}
     {state?.running && state.screen && !state.input && <p>{messages.accessibility_permission}</p>}
-    <div ref={pane} className="mac-claude-frame" style={{ "--desktop-zoom": zoom === "auto" ? 1 : zoom }}>
+    <div ref={pane} className="mac-claude-frame" data-fit={zoom === "auto" && image?.resizable ? "adaptive" : "native"} style={{ "--desktop-zoom": zoom === "auto" ? 1 : zoom }}>
       {error && <p role="alert" className="mac-claude-error">{error}</p>}
       {image?.video ? <canvas ref={surface} key={image.geometry || `${image.pid}-${image.window}`} role="img" aria-label={appName + " 客机窗口"} /> : image && <img ref={surface} key={image.geometry || `${image.pid}-${image.window}`} alt={appName + " 客机窗口"} src={image.src} draggable={false}
         onLoad={e => {

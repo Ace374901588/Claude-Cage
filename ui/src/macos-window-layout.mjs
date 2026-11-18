@@ -1,8 +1,9 @@
 export const macDesktopZoomKey = "cage-macos-desktop-zoom";
+export const macBrowserZoomKey = "cage-macos-browser-zoom";
 
 export function readDesktopZoom(storage, automatic, key) {
   try {
-    const stored = storage.getItem(key);
+    const stored = storage.getItem(key) ?? (key === macBrowserZoomKey ? storage.getItem(macDesktopZoomKey) : null);
     if (automatic && (stored === null || stored === "auto")) return "auto";
     const value = Number(stored);
     return [0.75, 0.9, 1, 1.1, 1.25, 1.5].includes(value) ? value : automatic ? "auto" : 1;

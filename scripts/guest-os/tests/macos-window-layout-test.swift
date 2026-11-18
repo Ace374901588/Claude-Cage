@@ -5,6 +5,13 @@ struct WindowLayoutTests {
     static func main() {
         let work = CGRect(x: 0, y: 25, width: 1440, height: 825)
         let small = CGRect(x: 840, y: 450, width: 600, height: 400)
+        let restoredBrowser = CGRect(x: 20, y: 40, width: 336, height: 87)
+        precondition(MacWindowLayout.matchingWindowIndex([small, restoredBrowser], frame: restoredBrowser) == 1)
+        precondition(MacWindowLayout.matchingWindowIndex([restoredBrowser, restoredBrowser], frame: restoredBrowser) == nil,
+                     "ambiguous background windows must never be resized by guessing")
+        precondition(MacWindowLayout.matchingWindowIndex([small], frame: restoredBrowser) == nil)
+        precondition(MacWindowLayout.target(current: restoredBrowser, viewport: CGSize(width: 1400, height: 850), workArea: work)?.size == CGSize(width: 1400, height: 825),
+                     "a restored thumbnail must grow to the available work area")
         let target = MacWindowLayout.target(current: small, viewport: CGSize(width: 1200, height: 800), workArea: work)!
         precondition(target == CGRect(x: 240, y: 50, width: 1200, height: 800), "bottom-right window must move before enlargement")
         // Emulate a window server that clamps growth to the current screen edge.

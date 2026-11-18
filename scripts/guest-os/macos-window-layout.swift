@@ -4,6 +4,17 @@ import CoreGraphics
 // destination origin must be calculated from the requested size, not the old
 // size: otherwise a small window at the bottom/right edge cannot grow.
 enum MacWindowLayout {
+    // A background app may still expose its real windows through AX. Require
+    // one exact geometry match; overlapping windows must not be guessed.
+    static func matchingWindowIndex(_ windows: [CGRect], frame: CGRect) -> Int? {
+        let matches = windows.indices.filter { index in
+            let value = windows[index]
+            return abs(value.minX - frame.minX) < 1 && abs(value.minY - frame.minY) < 1 &&
+                   abs(value.width - frame.width) < 1 && abs(value.height - frame.height) < 1
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
     static func target(current: CGRect, viewport: CGSize, workArea: CGRect) -> CGRect? {
         let values = [current.minX, current.minY, current.width, current.height,
                       viewport.width, viewport.height, workArea.minX, workArea.minY,

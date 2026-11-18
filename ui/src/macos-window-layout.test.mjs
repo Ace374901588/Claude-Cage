@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { macDesktopZoomKey, readDesktopZoom, macWindowViewport, observeMacWindowViewport } from "./macos-window-layout.mjs";
+import { macDesktopZoomKey, macBrowserZoomKey, readDesktopZoom, macWindowViewport, observeMacWindowViewport } from "./macos-window-layout.mjs";
 
 test("Mac defaults to adaptive sizing without changing Windows/Linux preferences", () => {
   const values = new Map([["cage-desktop-zoom", "1.5"], ["cage-windows-desktop-zoom", "0.9"]]);
@@ -13,6 +13,17 @@ test("Mac defaults to adaptive sizing without changing Windows/Linux preferences
   values.set(macDesktopZoomKey, "invalid");
   assert.equal(readDesktopZoom(storage, true, macDesktopZoomKey), "auto");
   assert.equal(readDesktopZoom({ getItem() { throw Error(); } }, true, macDesktopZoomKey), "auto");
+});
+
+test("browser display size migrates the shared preference and then stays independent", () => {
+  const values = new Map([[macDesktopZoomKey, "1.25"]]);
+  const storage = { getItem: key => values.get(key) ?? null };
+  assert.equal(readDesktopZoom(storage, true, macBrowserZoomKey), 1.25);
+  values.set(macBrowserZoomKey, "auto");
+  assert.equal(readDesktopZoom(storage, true, macBrowserZoomKey), "auto");
+  assert.equal(readDesktopZoom(storage, true, macDesktopZoomKey), 1.25);
+  values.set(macDesktopZoomKey, "0.9");
+  assert.equal(readDesktopZoom(storage, true, macBrowserZoomKey), "auto");
 });
 
 test("adaptive and manual zoom produce finite bounded guest dimensions", () => {

@@ -26,6 +26,7 @@ type macOSFrameHeader struct {
 	PID                int32   `json:"pid,omitempty"`
 	ContentWidth       float64 `json:"contentWidth,omitempty"`
 	ContentHeight      float64 `json:"contentHeight,omitempty"`
+	Resizable          bool    `json:"resizable"`
 	PixelWidth         int     `json:"pixelWidth,omitempty"`
 	PixelHeight        int     `json:"pixelHeight,omitempty"`
 	Unchanged          bool    `json:"unchanged,omitempty"`

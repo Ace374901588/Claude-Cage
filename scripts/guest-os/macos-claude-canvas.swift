@@ -71,6 +71,22 @@ func macApplicationWindowBounds(_ pid: pid_t) -> [CGRect] {
     return windows.compactMap(axRect)
 }
 
+// Sizing the already selected, signed application's window does not require
+// taking guest keyboard focus. Input continues to require owningAXWindow.
+// Otherwise a browser restored in the background can remain thumbnail-sized
+// until the user explicitly reactivates it, even though capture is healthy.
+private func layoutAXWindow(_ pid: pid_t, _ frame: CGRect) -> AXUIElement? {
+    if let focused = owningAXWindow(pid, frame) { return focused }
+    guard AccessibilityTrust.shared.current,
+          let windows = axAttribute(AXUIElementCreateApplication(pid), kAXWindowsAttribute) as? [AXUIElement] else { return nil }
+    let entries = windows.compactMap { element -> (AXUIElement, CGRect)? in
+        guard let bounds = axRect(element) else { return nil }
+        return (element, bounds)
+    }
+    guard let index = MacWindowLayout.matchingWindowIndex(entries.map { $0.1 }, frame: frame) else { return nil }
+    return entries[index].0
+}
+
 private func canSet(_ window: AXUIElement, _ name: String) -> Bool {
     var result = DarwinBoolean(false)
     return AXUIElementIsAttributeSettable(window, name as CFString, &result) == .success && result.boolValue
@@ -159,7 +175,7 @@ final class ClaudeCanvasSession {
                                 scale: density, resizable: known.resized)
         }
         var resized = false
-        if let ax = owningAXWindow(pid, bounds) {
+        if let ax = layoutAXWindow(pid, bounds) {
             let adjustable = MacWindowLayout.mayAdjust(
                 standard: axAttribute(ax, kAXSubroleAttribute) as? String == kAXStandardWindowSubrole,
                 modal: axAttribute(ax, kAXModalAttribute) as? Bool == true,
@@ -180,7 +196,7 @@ final class ClaudeCanvasSession {
                     // A bounded second pass handles asynchronous native layout
                     // and application minimum sizes without a per-frame loop.
                     for _ in 0..<2 {
-                        guard try owns(pid), owningAXWindow(pid, bounds) != nil,
+                        guard try owns(pid), layoutAXWindow(pid, bounds) != nil,
                               !MacWindowInputSession.hasHeldPointer else { throw Failure(7, "window_changed") }
                         var origin = wanted.origin, size = wanted.size
                         if bounds.origin != origin, let value = AXValueCreate(.cgPoint, &origin) {
@@ -193,7 +209,7 @@ final class ClaudeCanvasSession {
                         bounds = try liveBounds(window.windowID, pid)
                         if MacWindowLayout.agrees(bounds, wanted) { break }
                     }
-                    guard try owns(pid), owningAXWindow(pid, bounds) != nil else { throw Failure(7, "window_changed") }
+                    guard try owns(pid), layoutAXWindow(pid, bounds) != nil else { throw Failure(7, "window_changed") }
                     requested = (window.windowID, pid, wanted, bounds, Date())
                 }
                 resized = MacWindowLayout.agrees(bounds, wanted)

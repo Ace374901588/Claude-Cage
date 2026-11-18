@@ -42,6 +42,9 @@ func macFrameRecord(t *testing.T, header macOSFrameHeader, pixels []byte) []byte
 
 func TestMacOSBinaryFramePreservesBytesAndRejectsInvalidRecords(t *testing.T) {
 	header, pixels := macFrameFixture(t)
+	// The presentation layer must distinguish a fitted native window from a
+	// protected fixed-size sheet after the host relays the frame.
+	header.Resizable = true
 	decoded, actual, err := readMacOSFrame(bytes.NewReader(macFrameRecord(t, header, pixels)))
 	if err != nil || decoded != header || !bytes.Equal(actual, pixels) {
 		t.Fatalf("frame changed in transit: %v", err)

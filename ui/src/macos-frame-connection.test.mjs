@@ -60,11 +60,12 @@ function fixture(t, { supported = true, video = true, available = true } = {}) {
 test("video is negotiated only when WebCodecs is available and ACK follows presentation", async t => {
   const f = fixture(t);
   assert.equal(f.socket.sent[0].video, true);
-  f.socket.packet({});
+  f.socket.packet({ resizable: true });
   await settle();
   assert.equal(f.frames.length, 1);
   assert.equal(f.socket.sent.length, 1);
   assert.equal(f.frames[0].videoFrame.closed, false);
+  assert.equal(f.frames[0].resizable, true, "video must preserve the guest's adaptive layout result");
   f.frames[0].videoFrame.close();
   f.frames[0].acknowledge(); f.frames[0].acknowledge();
   assert.equal(f.socket.sent.length, 2);
