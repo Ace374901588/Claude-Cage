@@ -99,6 +99,10 @@ var (
 )
 
 func (s *Server) macOSWindowRPC(w http.ResponseWriter, r *http.Request, input macOSWindowRequest) {
+	if macOSAppLaunch(input.Action) && !s.macOSAppNetworkReady(r.Context()) {
+		jsonReply(w, map[string]string{"error": macOSAppNetworkError})
+		return
+	}
 	input = s.macOSFramePolicy().apply(input)
 	var reply []byte
 	var err error

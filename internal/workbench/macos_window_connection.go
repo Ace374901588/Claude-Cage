@@ -128,6 +128,16 @@ func (s *Server) macOSWindowConnection(w http.ResponseWriter, r *http.Request) {
 			s.noteNativeBrowserUse()
 		}
 		message.Request = macOSWindowClientRequest(message.Request, true, browser)
+		if macOSAppLaunch(message.Request.Action) && !s.macOSAppNetworkReady(ctx) {
+			_ = ws.SetWriteDeadline(time.Now().Add(12 * time.Second))
+			if ws.WriteJSON(struct {
+				ID     uint64            `json:"id"`
+				Result map[string]string `json:"result"`
+			}{message.ID, map[string]string{"error": macOSAppNetworkError}}) != nil {
+				return
+			}
+			continue
+		}
 		body, err := json.Marshal(message.Request)
 		if err != nil || len(body) > 64<<10 {
 			return

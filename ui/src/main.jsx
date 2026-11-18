@@ -1565,6 +1565,7 @@ function App() {
             style={{ "--split-left": `${100 * (dualBrowser && nativeSplit?.fraction || 0.5)}%` }}>
             {dropSide && <div aria-hidden="true" className={`split-drop split-${dropSide}`}>{dropSide === "left" ? "放到左侧" : "放到右侧"}</div>}
             {!storageRecovery && desktopOpen && macGuest && <MacOSAppWindow key="claude-desktop" uploads={desktopFiles.uploads} keyboard={status.keyboard} remoteRef={remote}
+              networkReady={status.ready && !status.job?.running && network.mode === "open"} networkLabel={network.label} networkGeneration={status.safety?.gate?.run_id}
               onStatus={notify} onFallback={(text, message) => setTransfer({ text, message })} visible={!settingsOpen && !managementPage} onConfirm={confirm}
               sidebarCollapsed={sidebarCollapsed} onExpand={() => persist("cage-sidebar-collapsed", false, setSidebarCollapsed)} />}
             {!storageRecovery && desktopOpen && !macGuest && <ClaudeDesktop
@@ -1587,6 +1588,7 @@ function App() {
                 {macGuest && !desktopOpen && !showHome && webPanes.length > 0 && (
                   <section className={`pane-lane browser-lane split-${paneSide(webPanes[0].id)}`}>
                     {status.ready && <MacOSAppWindow key="chrome" browser onOpenPage={openBrowserPage} visible={!settingsOpen} uploads={desktopFiles.uploads}
+                      networkReady={status.ready && !status.job?.running && network.mode === "open"} networkLabel={network.label} networkGeneration={status.safety?.gate?.run_id}
                       keyboard={status.keyboard} remoteRef={remote} onStatus={notify}
                       sidebarCollapsed={sidebarCollapsed} onExpand={() => persist("cage-sidebar-collapsed", false, setSidebarCollapsed)}
                       onFallback={(text, message) => setTransfer({ text, message })} />}

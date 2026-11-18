@@ -14,6 +14,7 @@ import { createMacWindowConnection } from "./macos-window-connection.mjs";
 import { createMacFrameConnection } from "./macos-frame-connection.mjs";
 import { createMacWindowRecovery } from "./macos-window-recovery.mjs";
 import { macDesktopZoomKey, observeMacWindowViewport } from "./macos-window-layout.mjs";
+import { launchMacAppWhenReady } from "./macos-window-launch.mjs";
 import { reportDiagnostic, reportDisplayDiagnostic } from "./diagnostics.mjs";
 import "./macos-claude-window.css";
 
@@ -28,6 +29,7 @@ const messages = {
   unknown_action: "客机窗口输入组件需要更新，请在环境设置中更新组件后重试。",
   input_connection_required: "窗口输入需要重新连接，请恢复画面后重试。",
   input_owned_by_another_view: "另一个连接正在操作此窗口，请等待它释放按键或拖动。",
+  network_not_ready: "网络尚未通过检查，应用暂不启动；检查通过后会自动重试。",
 };
 
 async function windowRequest(base, action, fields = {}, connection) {
@@ -65,7 +67,7 @@ function matchWindowBackground(img, pane, canvasRef) {
   pane.style.backgroundColor = uniform && pixels[3] === 255 ? `rgb(${pixels[0]}, ${pixels[1]}, ${pixels[2]})` : "";
 }
 
-export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard = "mac", remoteRef, sidebarCollapsed, onExpand, onConfirm, uploads = [], onStatus = () => {}, onFallback = () => {} }) {
+export function MacOSAppWindow({ browser = false, onOpenPage, visible, networkReady = false, networkGeneration = "", networkLabel = "外网状态待确认", keyboard = "mac", remoteRef, sidebarCollapsed, onExpand, onConfirm, uploads = [], onStatus = () => {}, onFallback = () => {} }) {
   const appName = browser ? "Google Chrome" : "Claude Desktop";
   const base = browser ? "/macos-browser" : "/macos/claude";
   const windowVisible = useWindowVisibility();
@@ -106,6 +108,8 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   const generation = useRef(0);
   const launched = useRef(false);
 
+  useEffect(() => { launched.current = false; }, [networkGeneration]);
+
   useEffect(() => {
     if (!screenVisible) return;
     setDisplayStats(null);
@@ -145,13 +149,13 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
         setState(current);
         // Opening this tab focuses the signed guest application. A background
         // Electron window can still be captured but cannot receive targeted input.
-        if (current.installed && !launched.current) {
-          launched.current = true;
-          await request("launch");
+        if (await launchMacAppWhenReady({ networkReady, installed: current.installed, launched,
+          isCurrent: live, launch: () => request("launch") })) {
           nextStatus = 0;
           delay = 100;
           return;
         }
+        if (!live()) return;
         if (current.running && current.screen) {
           if (current.push_frames && viewport.current) {
             if (!frameConnection.current) {
@@ -213,7 +217,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
       setInputChannel(null);
       frameConnection.current?.close(); frameConnection.current = null;
     };
-  }, [screenVisible, revision, base]);
+  }, [screenVisible, revision, base, networkReady, networkGeneration]);
 
   useLayoutEffect(() => {
     if (!image?.videoFrame || pendingVideo.current !== image.videoFrame) return;
@@ -240,7 +244,8 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   }, [image, browser]);
 
   async function action(name) {
-    try { if (name === "stop") launched.current = true; await request(name); setError(""); refresh((n) => n + 1); }
+    if (name === "launch" && !networkReady) { setError(messages.network_not_ready); return; }
+    try { await request(name); if (name === "stop" || name === "launch") launched.current = true; setError(""); refresh((n) => n + 1); }
     catch (e) { setError(e.message); }
   }
   useImperativeHandle(remoteRef, () => ({
@@ -359,12 +364,12 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
     {(browser || !nativeAvailable()) && <BrowserUploads requests={uploads} onStatus={onStatus} />}
     <DesktopToolbar title={appName} desktop={state} platform="macOS" automatic zoomPreferenceKey={macDesktopZoomKey} zoom={zoom} setZoom={setZoom} onConfirm={onConfirm}
       onStop={browser ? undefined : () => action("stop")} refresh={() => {
-        if (!browser && state?.running) void action("launch");
+        if (!browser && state?.running && networkReady) void action("launch");
         else refresh(n => n + 1);
       }} refreshLabel={"激活并重新连接 " + appName} sidebarCollapsed={sidebarCollapsed} onExpand={onExpand}>
       {browser && <BrowserFavorites ready={Boolean(state?.installed)} onOpen={onOpenPage} />}
       <MacOSLogin />
-      {!browser && <MacOSLogin manualConsole webSignIn label="网页登录" disabled={!state?.running}
+      {!browser && <MacOSLogin manualConsole webSignIn label="网页登录" disabled={!state?.running || !networkReady}
         onOpenChange={setWebLoginOpen} onReturn={() => void action("launch")} />}
       {displayStats?.format && <details className="mac-frame-status">
         <summary>画面状态</summary>
@@ -390,10 +395,11 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
       </details>}
       {!browser && <button disabled={!state?.input || !image || transferring} onClick={() => void chooseFiles()}>添加附件</button>}
       {!browser && <input ref={picker} type="file" multiple hidden aria-label="选择 Claude 附件" onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ""; if (files.length) void receive({ files, kind: "paste" }, pickerTarget.current || undefined).catch(fileFailure); }} />}
-      {(!state?.running || error) && <button onClick={() => action("launch")} disabled={!state?.installed}>{state?.running ? "重新连接应用" : "打开应用"}</button>}
+      {(!state?.running || error) && <button onClick={() => action("launch")} disabled={!state?.installed || !networkReady}>{state?.running ? "重新连接应用" : "打开应用"}</button>}
       {state?.installed && !state.screen && <button onClick={() => action("request-screen")}>授权窗口画面</button>}
       {state?.installed && !state.input && <button onClick={() => action("request-input")}>授权键鼠</button>}
     </DesktopToolbar>
+    {!networkReady && <p role="status">{networkLabel === "外网已放行" ? "正在完成环境操作" : networkLabel}。应用将等待环境就绪后再打开；已有窗口的网络请求继续受 Cage 限制。</p>}
     {fileError && <p role="alert">{fileError}</p>}
     {state && !state.installed && <p>此虚拟 Mac 尚未安装 {appName}。</p>}
     {state?.running && !state.screen && <p>{messages.screen_recording_permission}</p>}
