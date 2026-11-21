@@ -2,9 +2,9 @@
 
 **基于 Claude Cage 改造，专注 macOS 主机与 macOS 客机的 Cage H264。**
 
-Cage H264 是 [Ace374901588/Claude-Cage](https://github.com/Ace374901588/Claude-Cage) 独立维护的 Fork，基于 [Lee-xeo/Claude-Cage](https://github.com/Lee-xeo/Claude-Cage) 开发。我们保留 macOS 虚拟机路线，在客机中运行 macOS 版 Claude Desktop、Chrome 和开发工具，持续优化画面传输、窗口适配、鼠标输入与触控板滚动。
+Cage H264 是 [Ace374901588/Claude-Cage-H264-for-Mac](https://github.com/Ace374901588/Claude-Cage-H264-for-Mac) 独立维护的 Fork，基于 [Lee-xeo/Claude-Cage](https://github.com/Lee-xeo/Claude-Cage) 开发。我们保留 macOS 虚拟机路线，在客机中运行 macOS 版 Claude Desktop、Chrome 和开发工具，持续优化画面传输、窗口适配、鼠标输入与触控板滚动。
 
-[源码](https://github.com/Ace374901588/Claude-Cage) · [构建与实现说明](H264_LOCAL.txt) · [使用文档](docs/README.md) · [上游项目](https://github.com/Lee-xeo/Claude-Cage) · [MIT 许可](LICENSE)
+[源码](https://github.com/Ace374901588/Claude-Cage-H264-for-Mac) · [构建与实现说明](H264_LOCAL.txt) · [使用文档](docs/README.md) · [上游项目](https://github.com/Lee-xeo/Claude-Cage) · [MIT 许可](LICENSE)
 
 ## 项目定位与上游关系
 
@@ -34,7 +34,7 @@ H.264 需要客机和查看端均具备相应能力。WebCodecs 的硬件解码�
 
 ## 当前版本与验证范围
 
-当前版本标识为 **`0.1.8-local.h264.10`**。已集成的上游基线为 [`3f17a01`](https://github.com/Lee-xeo/Claude-Cage/commit/3f17a013ef765061d5210e959ac645ce829cdd95)，该版本的功能代码与实机验收对应 [`28994f5`](https://github.com/Ace374901588/Claude-Cage/commit/28994f523de8e1b8d912c4b6c8016f411cb70828)。
+当前版本标识为 **`0.1.8-local.h264.10`**。已集成的上游基线为 [`3f17a01`](https://github.com/Lee-xeo/Claude-Cage/commit/3f17a013ef765061d5210e959ac645ce829cdd95)，该版本的功能代码与实机验收对应 [`28994f5`](https://github.com/Ace374901588/Claude-Cage-H264-for-Mac/commit/28994f523de8e1b8d912c4b6c8016f411cb70828)。
 
 2026-11-19 的本地验收环境为 macOS 26.6.1 / Apple Silicon 主机与 arm64 macOS 客机，Claude Desktop 5.11492.5、Chrome 157.0.8103.79。已完成：
 
@@ -52,8 +52,8 @@ H.264 需要客机和查看端均具备相应能力。WebCodecs 的硬件解码�
 构建需要 Apple Silicon Mac、Xcode Command Line Tools / Swift、Node.js / npm、Python 3.11+、`uv`，以及满足两个 Go 模块要求的工具链：根模块 Go 1.26.10+，`tools/tailnet` Go 1.27.3+。其他原生构建依赖和固定摘要材料由构建脚本检查，详见 [H264 构建说明](H264_LOCAL.txt)及 [SSHFS 构建材料说明](scripts/guest-os/macos-sshfs-source-README)。
 
 ```sh
-git clone https://github.com/Ace374901588/Claude-Cage.git
-cd Claude-Cage
+git clone https://github.com/Ace374901588/Claude-Cage-H264-for-Mac.git
+cd Claude-Cage-H264-for-Mac
 
 go version
 go list -m
